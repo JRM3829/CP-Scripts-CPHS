@@ -19,7 +19,7 @@ updates=(
 )
 
 for entry in "${updates[@]}"; do
-    # Using 'cut' with a custom delimiter
+    # Cut for parsing anyting to left, anythin to right, etc
     FILE=$(echo "$entry"    | cut -d '|' -f1 | xargs)
     SEARCH=$(echo "$entry"  | cut -d '|' -f2 | xargs)
     REPLACE=$(echo "$entry" | cut -d '|' -f3- | xargs)
