@@ -22,6 +22,7 @@ readonly WHITELIST=(
     "agetty" "login" "sshd"
     "cron" "anacron" "atd"
     "irqbalance" "cupsd" "snapd" "polkitd" "colord" "udisksd" "accounts-daemon" "gnome-shell" "Xorg" "gdm3"
+    "ijent"
 )
 
 readonly PORT_BLACKLIST=(
@@ -115,7 +116,7 @@ die() {
     exit 1
 }
 
-# Validation functions
+
 validate_pid() {
     local pid=$1
     [[ "$pid" =~ ^[0-9]+$ ]] || die "Invalid PID format: $pid"
@@ -219,140 +220,95 @@ package_mode() {
 reason_mode() {
     local target=$1
     log_info "Analyzing target: $target"
-    
-    # port-to-PID conversion
-    local target_is_port="false"
+
+    # Port-to-PID conversion
     if [[ $target == :* ]]; then
-        target_is_port="true"
         local port_num=${target#:}
         validate_port "$port_num"
-        log_info "Looking up PID for port $port_num"
         target=$(sudo lsof -t -i :$port_num 2>/dev/null | head -n 1)
         [[ -z "$target" ]] && die "No active process found on port $port_num"
     fi
 
+    #  Environmental Variable Mode
     if [[ "$ENV" == "true" ]]; then
         validate_pid "$target"
         echo "--- ENVIRONMENTAL VARIABLES FOR PID $target ---"
-        # Filter Ls Colors
-        sudo strings /proc/"$target"/environ 2>/dev/null | \
-        grep -v "LS_COLORS=" | \
+        sudo strings /proc/"$target"/environ 2>/dev/null | grep -v "LS_COLORS=" | \
         sed -E 's/(.*PASS.*|.*SECRET.*|.*KEY.*|.*USER.*|.*COMMAND.*)/'\xb1'[!] \1/g'
         return
     fi
 
     if ! ps -p "$target" > /dev/null 2>&1; then die "PID $target is not active"; fi
 
+    # Data Parsing
     local target_pid="$target"
     local pgid=$(ps -p "$target_pid" -o pgid= 2>/dev/null | tr -d ' ')
     local ppid=$(ps -p "$target_pid" -o ppid= 2>/dev/null | tr -d ' ')
-    local g_pids=$(pgrep -g "$pgid" | xargs | tr ' ' ',')
-    local parent_args=$(ps -p "$ppid" -o args= 2>/dev/null)
-    local pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
+    local user=$(ps -p "$target_pid" -o user=)
     local exe_path=$(sudo readlink -f /proc/"$target_pid"/exe 2>/dev/null)
-    local tty=$(ps -p "$target_pid" -o tty= | tr -d ' ')
+    local parent_args=$(ps -p "$ppid" -o args= 2>/dev/null)
+    local parent_comm=$(ps -p "$ppid" -o comm= 2>/dev/null)
+    local g_pids=$(pgrep -g "$pgid" | xargs | tr ' ' ',')
 
     local script_path=""
-    [[ "$parent_args" =~ (\.[^[:space:]]+) ]] && script_path="(Script Location: ${BASH_REMATCH[1]})"
+    [[ "$parent_args" =~ (\s[^[:space:]]+\.[^[:space:]]+) ]] && script_path="(Script Location: ${BASH_REMATCH[1]})"
 
+    IFS="|" read -r r_score r_reasons r_whitelisted < <(risk_assessment "$target_pid")
     echo -e "[*] PID FOUND: $target_pid"
     echo -e "[*] PID GROUP FOUND: $pgid"
-    echo -e "USER: $(ps -p "$target_pid" -o user=)"
-    echo -e "LOCATION: $(sudo readlink -f /proc/"$target_pid"/exe 2>/dev/null) $script_path"
-
-    local env_origin=$(sudo strings /proc/"$target_pid"/environ 2>/dev/null | grep "^SUDO_COMMAND=" | cut -d= -f2-)
-
-    if [[ -n "$env_origin" ]]; then
-        echo -e "SOURCE COMMAND: \e[31m$env_origin\e[0m"
-    fi
+    echo -e "USER: $user"
+    echo -e "LOCATION: $exe_path $script_path"
     
-
-local leader_cmd=$(ps -p "$pgid" -o args= 2>/dev/null)
-local parent_comm=$(ps -p "$ppid" -o comm= 2>/dev/null)
-
-
-echo -e "STARTED BY: $parent_comm (PID: $ppid)"
+    local env_origin=$(sudo strings /proc/"$target_pid"/environ 2>/dev/null | grep "^SUDO_COMMAND=" | cut -d= -f2-)
+    [[ -n "$env_origin" ]] && echo -e "SOURCE COMMAND: \e[31m$env_origin\e[0m"
+    
+    echo -e "STARTED BY: $parent_comm (PID: $ppid)"
     echo -e "START TIME: $(ps -p "$target_pid" -o lstart=)"
 
-local group_list=$(pgrep -g "$pgid" | xargs | tr ' ' ',')
-local tree_pids="$ppid,$group_list"
+    echo -e "COMMANDS:"
+    if [[ -n "$env_origin" ]]; then
+        echo " -----> $env_origin (Parent)"
+    else
+        echo " $(ps -p "$pgid" -o args= 2>/dev/null) (Parent)"
+    fi
 
-echo -e "COMMANDS:"
+    pgrep -g "$pgid" | grep -vE "^($pgid|$target_pid)$" | while read -r m_pid; do
+        local m_args=$(ps -p "$m_pid" -o args= 2>/dev/null)
+        [[ -n "$m_args" ]] && echo " ----> $m_args"
+    done
 
-local cmd_tree
-cmd_tree=$(ps -ww -p "$group_list" -o args --forest --no-headers 2>/dev/null)
-if [[ -n "$env_origin" ]]; then
-    echo " -----> $env_origin (Parent)"
-elif [[ -n "$leader_cmd" ]]; then
-    echo "  $leader_cmd (Parent)"
-fi
-
-
-pgrep -g "$pgid" | grep -v "^$pgid$" | while read -r m_pid; do
-    local m_args=$(ps -p "$m_pid" -o args= 2>/dev/null)
-    [[ -n "$m_args" ]] && echo " ----> $m_args"
-done
 
     echo -e "\n[*] NETWORK ACTIVITY:"
     sudo lsof -i -nP -a -p "$target_pid" 2>/dev/null | tail -n +2 | awk '{print "  " $0}'
 
-    echo -e "\n[*] WYN PGID RISK ASSESSMENT:"
-    
-    local group_net=$(sudo lsof -i -nP -a -p "$g_pids" 2>/dev/null)
-    for black_port in "${PORT_BLACKLIST[@]}"; do
-        if echo "$group_net" | grep -q ":$black_port"; then
-            log_risk "  - [!] Blacklisted port: Group is using port $black_port."
-        fi
-    done
 
-    # Rev shell Check
-    if [[ -z "$tty" && -n "$group_net" && "$pcomm" != "systemd" ]]; then
-        log_risk "  - [!] STEALTH_NETWORK: Network activity with no TTY (Reverse Shell Indicator)."
+echo -e "\n[*] WYN PGID RISK ASSESSMENT (SCORE: $r_score)"
+
+local group_net=$(sudo lsof -i -nP -a -p "$g_pids" 2>/dev/null)
+for black_port in "${PORT_BLACKLIST[@]}"; do
+    if echo "$group_net" | grep -q ":$black_port"; then
+        local port_pid=$(echo "$group_net" | grep ":$black_port" | awk '{print $2}' | head -n 1)
+        log_risk " - [!] Blacklisted port: Group is using port $black_port. (PID: $port_pid)"
     fi
+done
 
-    
-    #
-    local is_whitelisted=false
-    for proc in "${WHITELIST[@]}"; do
-        if [[ "$(ps -p "$target_pid" -o comm= | tr -d ' ')" == "$proc" ]]; then
-            is_whitelisted=true
-            break
-        fi
+# Target Risks
+if [[ -n "$r_reasons" ]]; then
+    for reason in $r_reasons; do
+        [[ "$reason" == *"[BLACKLIST_PORT"* ]] && continue
+        log_risk " - [!] $reason"
     done
-    
-    if [[ "$is_whitelisted" == "true" ]]; then
-        case "$exe_path" in
-            /usr/bin/*|/bin/*|/usr/sbin/*|/sbin/*|/lib/*|/lib64/*|/usr/lib/*|/usr/lib64/*)
+fi
 
-                ;;
-            *)
-                log_risk "  - [!] WHITELIST_UNUSUAL_PATH: Whitelisted process running from unusual location: $exe_path"
-                ;;
-        esac
+
+for p in ${g_pids//,/ }; do
+    [[ "$p" == "$target_pid" ]] && continue
+    if sudo readlink /proc/"$p"/exe 2>/dev/null | grep -q "(deleted)"; then
+        log_risk " - [!] Member integrity alert: Binary deleted for PID $p"
     fi
+done
 
-    for p in ${g_pids//,/ }; do
-        local p_exe=$(sudo readlink -f /proc/"$p"/exe 2>/dev/null)
-        
-        # Check for Ghost/Deleted
-        if sudo readlink /proc/"$p"/exe 2>/dev/null | grep -q "(deleted)"; then
-            log_risk "  - [!] High Risk: Binary deleted while running (PID: $p)"
-        fi
-        
-        # Check for Shared Memory
-        if [[ "$p_exe" == "/dev/shm/"* ]]; then
-            log_risk "  - [!] High Risk: Shared Memory Execution (PID: $p)"
-        fi
-
-        # Check for Hidden Path
-        if [[ "$p_exe" == *"/."* ]]; then
-            log_risk "  - [!] Hidden_Path: Member is running from a hidden file/dir (PID: $p)"
-        fi
-    done
-
-    [[ "$(ps -p "$target_pid" -o user=)" == "root" ]] && log_warn "  - [WARN] Running as ROOT."
-    [[ "$parent_args" =~ (bash|zsh|sh) ]] && log_info "  - [INFO] Manual/Interactive Shell Parent."
-
+    
     echo -e "\n[*] Process Lineage (PGID: $pgid):"
     echo -e "[PARENT] PID $ppid"
     pgrep -g "$pgid" | while read -r m_pid; do
@@ -465,11 +421,12 @@ remove_mode() {
         elif [[ -n "$pgid" ]]; then
             echo "[*] Neutralizing entire process group (PGID: $pgid)..."
             
-            # Try the clean group kill first
+            # Try the clean group kill first (Never works btw)
             if ! sudo kill -9 -"$pgid" 2>/dev/null; then
                 log_warn "Standard group kill failed (Leader likely exited). Manually clearing members..."
                 
-                # Fallback: Find every remaining member of that group and kill them one-by-one
+                # Find every remaining member of that group and kill them one-by-one
+                # Meancing
                 local members=$(pgrep -g "$pgid")
                 if [[ -n "$members" ]]; then
                     echo "$members" | xargs sudo kill -9 2>/dev/null
@@ -512,6 +469,79 @@ global_calling() {
     fi
 }
 
+risk_assessment() {
+    local pid=$1
+    local score=0
+    local reasons=""
+
+
+    local comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d ' ')
+    local user=$(ps -p "$pid" -o user= 2>/dev/null | tr -d ' ')
+    local ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+    local pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null | tr -d ' ')
+    local tty=$(ps -p "$pid" -o tty= 2>/dev/null | tr -d ' ')
+    local exe_path=$(sudo readlink -f "/proc/$pid/exe" 2>/dev/null)
+    local net_info=$(sudo timeout 0.5s lsof -i -nP -a -p "$pid" 2>/dev/null)
+
+
+    # Deleted Binaries Check
+    if [[ $(sudo readlink /proc/$pid/exe 2>/dev/null) == *"(deleted)"* ]]; then
+        ((score += 50)); reasons+="[DELETED_BIN] "
+    fi
+
+    # Path-based Risk Checks
+    case "$exe_path" in
+        /tmp/*|/var/tmp/*) ((score += 50)); reasons+="[SCARY_PATH] " ;;
+        /home/*|/root/*)              ((score += 20)); reasons+="[USER_PATH] " ;;
+    esac
+    
+
+    [[ "$exe_path" == "/dev/shm/"* ]] && { ((score += 70)); reasons+="[SHARED_MEM_EXEC] "; }
+    [[ "$exe_path" == *"/."* ]] && { ((score += 35)); reasons+="[HIDDEN_PATH] "; }
+
+
+    local is_whitelisted=false
+    for proc in "${WHITELIST[@]}"; do
+        [[ "$comm" == "$proc" ]] && is_whitelisted=true && break
+    done
+
+    if [[ "$is_whitelisted" == "true" ]]; then
+        case "$exe_path" in
+            /usr/bin/*|/bin/*|/usr/sbin/*|/sbin/*|/lib/*|/usr/lib/*) ;; # Path is safe
+            *) ((score += 20)); reasons+="[WHITELIST_UNUSUAL_PATH] " ;;
+        esac
+    fi
+
+
+    for black_port in "${PORT_BLACKLIST[@]}"; do
+        if echo "$net_info" | grep -q ":$black_port"; then
+            ((score += 60)); reasons+="[BLACKLIST_PORT($black_port)] "
+            break
+        fi
+    done
+
+    if [[ -z "$tty" && -n "$net_info" && "$comm" != "systemd" ]]; then
+        ((score += 45)); reasons+="[STEALTH_NETWORK] "
+    fi
+
+    # Standard I/O Redirection (0,1,2 Rule) ( I dont really get this but google said i should do this)
+    if sudo ls -la /proc/"$pid"/fd/ 2>/dev/null | grep -E " (0|1|2) -> " | grep -qE "(pipe|socket):"; then
+        ((score += 25)); reasons+="[STDIO_REDIRECT] "
+    fi
+
+    # Stealth Network
+    local net_check=$(sudo timeout 0.2s lsof -i -nP -a -p "$pid" 2>/dev/null)
+    if [[ -z "$tty" && -n "$net_check" && "$pcomm" != "systemd" ]]; then
+        ((score += 45))
+        reasons+="[STEALTH_NETWORK] "
+    fi
+
+    [[ "$user" == "root" ]] && { ((score += 10)); reasons+="[ROOT] "; }
+    [[ "$pcomm" =~ (bash|zsh|sh) ]] && { ((score += 15)); reasons+="[SHELL_PARENT] "; }
+
+    # Return as a string:
+    echo "$score|$reasons|$is_whitelisted"
+}
 
 cleanup() {
     exit 0
@@ -589,7 +619,7 @@ parse_arguments() {
     done
 }
 
-# Main execution logic
+
 main() {
 
     check_dependencies
@@ -605,8 +635,7 @@ main() {
     global_calling
 
     parse_arguments "$@"
-    
-    # Execute based on parsed arguments
+
     if [[ -n "$AUDIT" ]]; then
         audit_mode "$AUDIT"
     elif [[ -n "$REMOVE" ]]; then
@@ -690,7 +719,7 @@ scan_mode() {
         fi
     elif [[ "$scan_type" == "pid" ]]; then
         if [[ "$NORMAL" == "true" ]]; then
-            ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 20
+            ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu
         else
             echo -e "\n==================== PROCESSES: TOP CPU/MEM ===================="
             echo -e "PID\tUSER\t\tCPU%\tMEM%\tCOMMAND"
@@ -759,7 +788,7 @@ audit_system_mode() {
 }
 
 audit_artifacts_mode() {
-    echo -e "\n\e[1;37m[#] Audit Type: System\e[0m"
+    echo -e "\n\e[1;37m[#] Audit Type: Artifacts\e[0m"
     echo "------------------------------------------------------------"
     log_info "Artifacts And Software Checker"
     
@@ -818,154 +847,57 @@ audit_mode() {
     esac
 }
 
+
 audit_pid_mode() {
     echo -e "\n\e[1;37m[#] RISK ASSESSMENT\e[0m"
     echo "------------------------------------------------------------"
     log_info "Starting secure process audit..."
+
     local suspicious_count=0
     local high_risk_pids=()
-
-    local -r MEDIUM_RISK_THRESHOLD=10
     local -r HIGH_RISK_THRESHOLD=50
-    
 
-    declare -A whitelist_map
-    for proc in "${WHITELIST[@]}"; do
-        whitelist_map["$proc"]=1
-    done
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        local pid user comm args
-        read -r pid user comm args <<< "$line"
-        [[ "$pid" == "PID" || "$pid" == "$$" || ! "$pid" =~ ^[0-9]+$ ]] && continue
 
-        # Philospher stuff
-        if ! ps -p "$pid" > /dev/null 2>&1; then
-            log_verbose "PID $pid no longer exists, skipping"
-            continue
-        fi
+    while read -r pid; do
+        [[ -z "$pid" || "$pid" == "$$" ]] && continue
 
-        local score=0
-        local reasons=""
-        local exe_path="unknown"
-        local deleted_binary=false
 
-        if exe_path=$(sudo readlink -f "/proc/$pid/exe" 2>/dev/null); then
-            if sudo ls -l "/proc/$pid/exe" 2>/dev/null | grep -q " (deleted)"; then
-                deleted_binary=true
-            fi
-        else
-            exe_path="unknown"
-        fi
-
-        local is_whitelisted=false
-        if [[ -n "${whitelist_map[$comm]:-}" ]]; then
-            case "$exe_path" in
-                /usr/bin/*|/bin/*|/usr/sbin/*|/sbin/*|/lib/*|/lib64/*|/usr/lib/*|/usr/lib64/*)
-                    is_whitelisted=true
-                    ;;
-                *)
-                    # Whitelisted process running from unusual location
-                    ((score += 20))
-                    reasons+="[WHITELIST_UNUSUAL_PATH] "
-                    ;;
-            esac
-        fi
-
+        IFS="|" read -r score reasons is_whitelisted < <(risk_assessment "$pid")
         [[ "$is_whitelisted" == "true" ]] && continue
-
-
-        [[ "$deleted_binary" == "true" ]] && { ((score += 50)); reasons+="[DELETED_BIN] "; }
-        
-        case "$exe_path" in
-            /tmp/*|/dev/shm/*|/var/tmp/*) ((score += 50)) ;; # Scary space
-            */.*) ((score += 35)) ;;                         # Hidden
-            /home/*|/root/*) ((score += 20)) ;;              # Standard user paths might get false postives
-        esac
-        
-        [[ "$user" == "root" ]] && { ((score += 10)); reasons+="[ROOT] "; }
-
-        local net_info=$(sudo timeout 1s lsof -i -a -p "$pid" 2>/dev/null)
-        for black_port in "${PORT_BLACKLIST[@]}"; do
-            if echo "$net_info" | grep -q ":$black_port"; then
-                ((score += 60))
-                reasons+="[BLACKLIST_PORT] "
-                break
-            fi
-        done
-
-        # Network process without TTY
-        local tty=$(ps -p "$pid" -o tty= 2>/dev/null | tr -d ' ')
-        if [[ -z "$tty" && -n "$net_info" ]]; then
-            if [[ "$comm" != "systemd" ]]; then
-                ((score += 45)) # Custom or suspicious ( I don't remeber the cyberpatriot process names so it might flag that)
-                reasons+="[STEALTH_NETWORK] "
-            fi
-        fi
-
-        # Process parent analysis
-        local ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
-        local pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null | tr -d ' ')
-        case "$pcomm" in
-            *sh|bash|zsh|ksh)
-                ((score += 15)); reasons+="[SHELL_PARENT] " ;;
-        esac
-
-        if [[ $score -ge $MEDIUM_RISK_THRESHOLD ]]; then
+        if ! ps -p "$pid" > /dev/null 2>&1; then continue; fi
+        if [[ $score -gt 0 ]]; then
             ((suspicious_count++))
-            
+
             if [[ $score -ge $HIGH_RISK_THRESHOLD ]]; then
                 high_risk_pids+=("$pid")
+                local comm=$(ps -p "$pid" -o comm= 2>/dev/null)
+
                 echo -e "\e[1;31m[CRITICAL: $score]\e[0m PID $pid ($comm) -> $reasons"
                 echo -e "  \e[1;33m[!] High Risk Target Detected. Triggering Analysis...\e[0m"
-                
-                # Double-check PID exists
-                if ps -p "$pid" > /dev/null 2>&1; then
-                    reason_mode "$pid"
-                else
-                    log_warn "PID $pid terminated before analysis could complete"
-                fi
+
+
+                reason_mode "$pid"
                 echo "------------------------------------------------------------"
             elif [[ "$VERBOSE" == "true" ]]; then
-                echo -e "\e[1;34m[INFO: $score]\e[0m PID $pid ($comm) at $exe_path -> $reasons"
+                local comm=$(ps -p "$pid" -o comm= 2>/dev/null)
+                echo -e "\e[1;34m[INFO: $score]\e[0m PID $pid ($comm) -> $reasons"
             fi
         fi
+    done < <(ps -eao pid --no-headers 2>/dev/null)
 
-    done < <(ps -eao pid,user,comm,args --no-headers 2>/dev/null)
 
     echo -e "\n[*] AUDIT SUMMARY: Found $suspicious_count suspicious items."
-    
-    # Semi auto delete
     if [[ ${#high_risk_pids[@]} -gt 0 ]]; then
         echo -e "\e[1;31m[!] ACTION REQUIRED\e[0m"
         echo "High risk PIDs: ${high_risk_pids[*]}"
-
-        local valid_pids=()
-        for pid in "${high_risk_pids[@]}"; do
-            if ps -p "$pid" > /dev/null 2>&1; then
-                valid_pids+=("$pid")
-            else
-                log_warn "PID $pid terminated - removed from remediation list"
-            fi
-        done
-        
-        if [[ ${#valid_pids[@]} -gt 0 ]]; then
-            read -p "Would you like to run removal on these targets? (y/N): " choice
-            if [[ "$choice" =~ ^[Yy]$ ]]; then
-                for pid in "${valid_pids[@]}"; do
-                    if ps -p "$pid" > /dev/null 2>&1; then
-                        remove_mode "$pid"
-                    else
-                        log_warn "PID $pid terminated before removal"
-                    fi
-                done
-            fi
-        else
-            echo "All high risk processes have terminated."
+        read -p "Would you like to run removal on these targets? (y/N): " choice
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
+            for pid in "${high_risk_pids[@]}"; do
+                [[ -n "$pid" ]] && remove_mode "$pid"
+            done
         fi
     fi
 }
-
 
 main "$@"
 
