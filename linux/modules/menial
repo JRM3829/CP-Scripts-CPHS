@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+
+CONF_DIR="${WYN_HOME}/conf"
+DRY_RUN="${DRY_RUN:-false}"
+PROMPT_MODE=false
+sysctl_applied=false
+
+usage() { echo "usage: wyn menial <quick|slow> [-y|-p|-n]" >&2; exit 0; }
+
+trim() {
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  printf '%s' "$v"
+}
+
+# check may contain pipes
+parse_entry() {
+  local e="$1"
+  local -n nf="$2" ns="$3" nr="$4" nc="$5"
+  IFS='|' read -r nf ns nr nc <<< "$e"
+  nf=$(trim "$nf"); ns=$(trim "$ns"); nr=$(trim "$nr"); nc=$(trim "$nc")
+}
+
+entry_is_pending() {
+  local f="$1" s="$2" r="$3" c="$4"
+  if [ "$f" = CMD ]; then
+    if [ -n "$c" ]; then
+      bash -c "$c" 2>/dev/null && return 1 || return 0
+    fi
+    return 0
+  fi
+  [ ! -f "$f" ] && return 0
+  grep -Fxq "$r" "$f" && return 1
+  return 0
+}
+
+apply_config_entry() {
+  local f="$1" s="$2" r="$3"
+  local safe
+  if [ ! -f "$f" ]; then
+    warn "WARN     skip $f (missing)"
+    return 0
+  fi
+  if [ "$DRY_RUN" = true ]; then
+    echo "DRY      $s"
+    return 0
+  fi
+  cp "$f" "${f}.bak.$(date +%Y%m%d%H%M%S)"
+  safe=$(printf '%s' "$s" | sed 's/[.[^*$\\^|]/\\&/g')
+  if case "$s" in \**) true ;; *) false ;; esac; then
+    if grep -iq "$safe" "$f"; then
+      sed -i "s|.*${safe}.*|${r}|" "$f"
+    else
+      printf '%s\n' "$r" >> "$f"
+    fi
+  elif grep -iq "^#* *${safe}" "$f"; then
+    sed -i "s|^#* *${safe}.*|${r}|" "$f"
+  else
+    printf '%s\n' "$r" >> "$f"
+  fi
+  [ "$f" = /etc/sysctl.conf ] && sysctl_applied=true
+  echo "OK       $s"
+}
+
+apply_entries() {
+  local f s r ignored
+  for e in "$@"; do
+    parse_entry "$e" f s r ignored
+    if [ "$f" = CMD ]; then
+      if [ "$DRY_RUN" = true ]; then
+        echo "DRY      $s"
+      elif bash -c "$r"; then
+        echo "OK       $s"
+      else
+        warn "FAIL     $s"
+      fi
+    else
+      apply_config_entry "$f" "$s" "$r"
+    fi
+  done
+}
+
+process_section() {
+  local name="$1"; shift
+  [ $# -eq 0 ] && return
+  local -a pending=()
+  local f s r c
+  echo "[$name]"
+  for e in "$@"; do
+    parse_entry "$e" f s r c
+    if entry_is_pending "$f" "$s" "$r" "$c"; then
+      pending+=("$e")
+    else
+      echo "OK       $s"
+    fi
+  done
+  [ ${#pending[@]} -eq 0 ] && return 0
+  if [ "$DRY_RUN" = true ]; then
+    apply_entries "${pending[@]}"
+  elif [ "$PROMPT_MODE" = true ]; then
+    confirm "apply $name changes?" && apply_entries "${pending[@]}" || echo "WARN     skipped $name"
+  else
+    apply_entries "${pending[@]}"
+  fi
+}
+
+apply_conf() {
+  local cf="$1"
+  [ -f "$cf" ] || die "config not found: $cf"
+  local sec="" prev="" entry f s r c
+  local -a sec_entries=() lines
+  mapfile -t lines < "$cf"
+  for raw in "${lines[@]}"; do
+    entry=$(trim "$raw")
+    case "$entry" in ''|\#*) continue ;; esac
+    parse_entry "$entry" f s r c
+    [ -n "$f" ] && [ -n "$s" ] && [ -n "$r" ] || die "invalid config entry: $raw"
+    if [ "$f" = CMD ]; then
+      bash -n -c "$r" || die "invalid command syntax: $s"
+      [ -z "$c" ] || bash -n -c "$c" || die "invalid state-check syntax: $s"
+    fi
+  done
+  for raw in "${lines[@]}"; do
+    sec=$(printf '%s' "$raw" | sed -nE 's/^[[:space:]]*#[[:space:]]*---[[:space:]]+(.+)[[:space:]]+---[[:space:]]*$/\1/p')
+    if [ -n "$sec" ]; then
+      [ -n "$prev" ] && process_section "$prev" "${sec_entries[@]}"
+      prev="$sec"
+      sec_entries=()
+      continue
+    fi
+    entry=$(trim "$raw")
+    [ -z "$entry" ] && continue
+    case "$entry" in \#*) continue ;; esac
+    [ -z "$prev" ] && prev=Menial
+    sec_entries+=("$entry")
+  done
+  [ -n "$prev" ] && process_section "$prev" "${sec_entries[@]}"
+  if [ "$DRY_RUN" != true ] && [ "$sysctl_applied" = true ]; then
+    sysctl -p > /dev/null || warn "sysctl reload failed"
+  fi
+}
+
+mode=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    quick|slow) [ -n "$mode" ] && die "one mode only"; mode="$1" ;;
+    -y|--yes) PROMPT_MODE=false ;;
+    -p|--prompt) PROMPT_MODE=true ;;
+    -n|--dry-run) DRY_RUN=true ;;
+    -h|--help) usage ;;
+    *) die "unknown arg: $1" ;;
+  esac
+  shift
+done
+[ -n "$mode" ] || die "missing mode (quick|slow)"
+
+apply_conf "${CONF_DIR}/menial-${mode}.conf"

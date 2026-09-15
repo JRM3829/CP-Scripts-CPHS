@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+source "${WYN_HOME}/libs/readme.sh"
+source "${WYN_HOME}/libs/findings.sh"
+
+usage() {
+  printf "Usage: wyn checklist [--select]\n\n"
+  printf "  wyn checklist           show the complete compliance report\n"
+  printf "  wyn checklist --select  choose findings to remove\n"
+  exit 0
+}
+
+SELECT=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    --select) SELECT=true ;;
+    *) die "usage: wyn checklist [--select]" ;;
+  esac
+  shift
+done
+
+if ! readme_load 2>/dev/null; then
+  warn "[!] no readme found - account and sudo checks skipped"
+  ADMINS=""; USERS=""; PROTECTED_USER=""; CRITICAL_SERVICES=""
+fi
+
+declare -a CAT=() TGT=() DET=() ACT=()
+declare -A SEEN=()
+while IFS='|' read -r c t d a; do
+  [ -n "$c" ] || continue
+  key="${c}|${t}|${a}"
+  if [ -n "${SEEN[$key]:-}" ]; then
+    idx="${SEEN[$key]}"
+    case "${DET[$idx]}" in *"$d"*) ;; *) DET[$idx]="${DET[$idx]}; $d" ;; esac
+    continue
+  fi
+  SEEN[$key]=${#CAT[@]}
+  CAT+=("$c"); TGT+=("$t"); DET+=("$d"); ACT+=("$a")
+done < <(scan_all)
+
+declare -a NUM_IDX=()
+readonly -a DISPLAY_CATS=(media hidden network outgoing account sudo cron autostart software process payload sshkey)
+for cat in "${DISPLAY_CATS[@]}"; do
+  for i in "${!CAT[@]}"; do
+    [ "${CAT[$i]}" = "$cat" ] && [ "${ACT[$i]}" != none ] && NUM_IDX+=("$i")
+  done
+done
+
+heading() {
+  case "$1" in
+    media)     echo "FILES: PROHIBITED" ;;
+    hidden)    echo "FILES: SUSPICIOUS" ;;
+    network)   echo "SERVICES: UNEXPECTED LISTENING" ;;
+    outgoing)  echo "NETWORK: SUSPICIOUS OUTGOING" ;;
+    account)   echo "ACCOUNTS: PASSWORDS" ;;
+    sudo)      echo "ACCOUNTS: PRIVILEGES" ;;
+    cron)      echo "PERSISTENCE: CRON" ;;
+    autostart) echo "PERSISTENCE: AUTOSTART" ;;
+    software)  echo "SOFTWARE: UNAUTHORIZED" ;;
+    process)   echo "PROCESSES: HIGH RISK" ;;
+    payload)   echo "PROCESSES: INTERPRETED PAYLOADS" ;;
+    sshkey)    echo "ACCESS: AUTHORIZED KEYS" ;;
+    *)         printf '%s\n' "${1^^}" ;;
+  esac
+}
+
+declare -A NUM_OF=()
+n=0
+for i in "${NUM_IDX[@]}"; do
+  n=$((n + 1)); NUM_OF[$i]=$n
+done
+
+item_lead() {
+  if [ "$SELECT" = true ] && [ -n "${NUM_OF[$1]:-}" ]; then
+    printf '  [%s] ' "${NUM_OF[$1]}"
+  else
+    printf '  '
+  fi
+}
+
+print_media() {
+  local i j dir name ext key count
+  declare -A groups=()
+  for i in "${!CAT[@]}"; do
+    [ "${CAT[$i]}" = media ] || continue
+    dir="${TGT[$i]%/*}/"; name="${TGT[$i]##*/}"; ext=".${name##*.}"; key="$dir|$ext"
+    [ -z "${groups[$key]:-}" ] || continue
+    groups[$key]=1; count=0
+    for j in "${!CAT[@]}"; do
+      [ "${CAT[$j]}" = media ] && [ "${TGT[$j]%/*}/|.${TGT[$j]##*.}" = "$key" ] && count=$((count + 1))
+    done
+    printf '  Directory : %s\n' "$dir"
+    printf '  Extension : %s (%d matches)\n' "$ext" "$count"
+    printf '  Items     :\n'
+    for j in "${!CAT[@]}"; do
+      [ "${CAT[$j]}" = media ] && [ "${TGT[$j]%/*}/|.${TGT[$j]##*.}" = "$key" ] || continue
+      if [ "$SELECT" = true ] && [ -n "${NUM_OF[$j]:-}" ]; then
+        printf '    [%s] %s\n' "${NUM_OF[$j]}" "${TGT[$j]##*/}"
+      else
+        printf '    - %s\n' "${TGT[$j]##*/}"
+      fi
+    done
+    printf '\n'
+  done
+}
+
+print_network() {
+  local i row meta svc path endpoint proto ports
+  for i in "${!CAT[@]}"; do
+    [ "${CAT[$i]}" = network ] || continue
+    row="${DET[$i]%%; *}"; meta="${row#*(}"; meta="${meta%)}"
+    svc="${meta%%,*}"; path=-
+    case "$meta" in *,*) path="${meta#*, }" ;; esac
+    ports=""
+    while IFS= read -r row; do
+      endpoint="${row%% (*}"; proto="${endpoint%% *}"; endpoint="${endpoint#* }"
+      ports+="${ports:+, }${proto}/${endpoint##*:}"
+    done <<< "${DET[$i]//; /$'\n'}"
+    item_lead "$i"
+    printf '%-12s (PID %-5s) : %s -> %s\n' "$svc" "${TGT[$i]}" "$ports" "$path"
+  done
+}
+
+printf '\n-- COMPLIANCE AUDIT REPORT --\n'
+if [ ${#CAT[@]} -eq 0 ]; then
+  printf '\nNo findings.\n'
+else
+  for cat in "${DISPLAY_CATS[@]}"; do
+    present=false
+    for i in "${!CAT[@]}"; do [ "${CAT[$i]}" = "$cat" ] && { present=true; break; }; done
+    [ "$present" = true ] || continue
+    printf '\n[%s]\n' "$(heading "$cat")"
+    case "$cat" in
+      media) print_media ;;
+      network) print_network ;;
+      *)
+        for j in "${!CAT[@]}"; do
+          [ "${CAT[$j]}" = "$cat" ] || continue
+          item_lead "$j"
+          case "$cat:${DET[$j]}" in
+            account:"empty password") printf '%s : ALERT - Account has an empty password string\n' "${TGT[$j]}" ;;
+            account:*) printf '%s : ALERT - %s\n' "${TGT[$j]}" "${DET[$j]}" ;;
+            sudo:*) printf "%s : MISMATCH - User has sudo access but is marked 'standard' in README\n" "${TGT[$j]}" ;;
+            outgoing:*) printf 'PID %-7s : %s\n' "${TGT[$j]}" "${DET[$j]}" ;;
+            payload:*) printf 'PID %-7s : %s\n' "${TGT[$j]}" "${DET[$j]}" ;;
+            *) printf '%s : %s\n' "${TGT[$j]}" "${DET[$j]}" ;;
+          esac
+        done
+        ;;
+    esac
+  done
+fi
+
+printf '\n-- SUMMARY: %d findings, %d selectable; nothing changed --\n' "${#CAT[@]}" "${#NUM_IDX[@]}"
+
+[ "$SELECT" = true ] || { printf "run 'wyn checklist --select' to review or remove them\n"; exit 0; }
+[ ${#NUM_IDX[@]} -eq 0 ] && { printf '\nnothing removable\n'; exit 0; }
+
+printf '\nselect items to remove (e.g. "1 3 5-7", "a" for all, blank to cancel): '
+read -r spec || spec=""
+[ -n "${spec// /}" ] || { echo "cancelled"; exit 0; }
+
+declare -a PICKED=()
+while read -r n; do
+  [ -n "$n" ] && PICKED+=("${NUM_IDX[$((n - 1))]}")
+done < <(expand_selection "$spec" "${#NUM_IDX[@]}" | sort -nu)
+
+[ ${#PICKED[@]} -eq 0 ] && { echo "nothing matched"; exit 0; }
+
+printf '\nabout to remove:\n'
+for i in "${PICKED[@]}"; do
+  printf '  %-8s %-10s %s\n' "${ACT[$i]}" "${CAT[$i]}" "${TGT[$i]}"
+done
+
+if [ "${DRY_RUN:-false}" = true ]; then
+  printf '\ndry run - nothing removed\n'
+  exit 0
+fi
+
+confirm "remove ${#PICKED[@]} item(s)? this destroys forensics evidence" n || { echo "cancelled"; exit 0; }
+
+for i in "${PICKED[@]}"; do
+  t="${TGT[$i]}"
+  case "${ACT[$i]}" in
+    rm)
+      [ -f "$t" ] && printf '  sha256 %s  %s\n' "$(sha256sum "$t" 2>/dev/null | awk '{print $1}')" "$t"
+      rm -f "$t" && echo "  removed $t" || warn "  rm failed: $t" ;;
+    rmline)
+      remove_cron_line "$t" "${DET[$i]}" && echo "  cleared entry in $t" || warn "  edit failed: $t" ;;
+    purge)
+      pkg_remove "$t" && echo "  purged $t" || warn "  purge failed: $t" ;;
+    userdel)
+      userdel -rf "$t" >/dev/null 2>&1 && echo "  deleted user $t" || warn "  userdel failed: $t" ;;
+    desudo)
+      gpasswd -d "$t" sudo >/dev/null 2>&1 && echo "  removed sudo from $t" || warn "  desudo failed: $t" ;;
+    process)
+      "${WYN_HOME}/wyn" processes remove -y "$t" && echo "  stopped process $t" || warn "  process removal failed: $t" ;;
+    *) warn "  no action for $t" ;;
+  esac
+done

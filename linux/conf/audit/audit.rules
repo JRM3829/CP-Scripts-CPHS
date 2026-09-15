@@ -1,0 +1,47 @@
+-D
+-b 8192
+-f 1
+
+-w /etc/audit/ -p wa -k audit_config
+-w /etc/audit/auditd.conf -p wa -k audit_config
+-w /etc/audit/rules.d/ -p wa -k audit_config
+-w /etc/libaudit.conf -p wa -k audit_config
+
+-w /etc/group -p wa -k identity
+-w /etc/passwd -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+
+-w /etc/pam.d/ -p wa -k pam
+-w /etc/security/ -p wa -k pam
+
+-w /etc/hosts -p wa -k network_mod
+-w /etc/network/ -p wa -k network_mod
+-w /etc/sysconfig/network -p wa -k network_mod
+-w /etc/resolv.conf -p wa -k network_mod
+-a always,exit -F arch=b64 -S sethostname -S setdomainname -k network_mod
+-a always,exit -F arch=b32 -S sethostname -S setdomainname -k network_mod
+
+-w /etc/sudoers -p wa -k sudoers
+-w /etc/sudoers.d/ -p wa -k sudoers
+-a always,exit -F path=/usr/bin/sudo -F perm=x -k privileged
+-a always,exit -F path=/usr/bin/su -F perm=x -k privileged
+
+-a always,exit -F arch=b64 -S open -S openat -S creat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access_denied
+-a always,exit -F arch=b64 -S open -S openat -S creat -S truncate -S ftruncate -F exit=-EPERM  -F auid>=1000 -F auid!=4294967295 -k access_denied
+-a always,exit -F arch=b32 -S open -S openat -S creat -S truncate -S ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=4294967295 -k access_denied
+-a always,exit -F arch=b32 -S open -S openat -S creat -S truncate -S ftruncate -F exit=-EPERM  -F auid>=1000 -F auid!=4294967295 -k access_denied
+
+-a always,exit -F arch=b64 -S adjtimex -S settimeofday -S clock_settime -k time_change
+-a always,exit -F arch=b32 -S adjtimex -S settimeofday -S clock_settime -k time_change
+-w /etc/localtime -p wa -k time_change
+
+-w /sbin/insmod -p x -k modules
+-w /sbin/rmmod -p x -k modules
+-w /sbin/modprobe -p x -k modules
+-a always,exit -F arch=b64 -S init_module -S delete_module -S finit_module -k modules
+-a always,exit -F arch=b32 -S init_module -S delete_module -S finit_module -k modules
+
+# reboot to unlock
+-e 2

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+source "${WYN_HOME}/libs/findings.sh"
+
+usage() {
+    printf "Usage: wyn network <command>\n\n"
+    printf "Commands:\n"
+    printf "  scan     List all listening ports and associated processes\n"
+    printf "  search   <query> Search open ports and processes by string\n"
+    exit 0
+}
+[ $# -gt 0 ] || usage
+command="$1"; shift
+
+case "$command" in
+  search)
+    [ $# -gt 0 ] || die "search needs a query"
+    printf '\n[port]\n'
+    ss -tulpn 2>/dev/null | grep LISTEN | grep -i "$1" || echo "no port match"
+    printf '\n[proc]\n'
+    ps -eo pid,user,comm,args 2>/dev/null | grep -i "$1" | grep -v grep || echo "no proc match"
+    ;;
+  scan | ports)
+    probe=false
+    for a in "$@"; do
+      case "$a" in
+        -b|--banner) probe=true ;;
+        -h|--help) usage ;;
+        *) die "bad option: $a" ;;
+      esac
+    done
+
+    printf '%-8s %-15s %-8s %s\n' PORT SERVICE PID PATH
+    declare -a pr=()
+    while IFS='|' read -r proto port addr svc pid path; do
+      printf '%-8s %-15s %-8s %s\n' "$port/$proto" "$svc" "$pid" "$path"
+      if [ "$probe" = true ]; then
+        bann=$(grab_service_banner "$port")
+        v=$(classify_probe "$(probe_port "$port")")
+        pr+=("${port}|${v}|${bann}")
+      fi
+    done < <(list_listeners)
+
+    if [ "$probe" = true ] && [ ${#pr[@]} -gt 0 ]; then
+      printf '\n[probes]\n'
+      for res in "${pr[@]}"; do
+        IFS='|' read -r p v b <<< "$res"
+        printf '  %-6s %s\n' "$p" "$v"
+        printf '        banner: "%s"\n' "$b"
+      done
+    fi
+    ;;
+  -h|--help) usage ;;
+  *) die "unknown network cmd: $command" ;;
+esac

@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+source "${WYN_HOME}/libs/findings.sh"
+
+usage() { echo "usage: wyn processes {remove <pid|:port>|pack <pid|:port>|scan}" >&2; exit 0; }
+
+[ $# -gt 0 ] || usage
+command="$1"; shift
+
+case "$command" in
+  remove)
+    [ $# -gt 0 ] || die "remove needs pid or :port"
+    declare -a rargs=()
+    for a in "$@"; do
+      case "$a" in
+        -y|--yes) ;;
+        *) rargs+=("$a") ;;
+      esac
+    done
+    [ ${#rargs[@]} -gt 0 ] || die "remove needs pid or :port"
+    t="${rargs[0]}"; pid="$t"
+    case "$t" in
+      :*)
+        root_pid=$(resolve_target "$t" 2>/dev/null || true)
+        if [ -n "$root_pid" ]; then
+          pid="$root_pid"
+        else
+          pid=$(get_pid_from_port "${t#:}")
+        fi
+        ;;
+    esac
+    validate_pid "$pid"
+
+    payload=$(get_process_payload "$pid" 2>/dev/null || true)
+    refs=""
+    cleanup_payload=false
+    if [ -n "$payload" ]; then
+      case "$payload" in
+        "$WYN_HOME"|"$WYN_HOME"/*) warn "refusing to remove wyn file $payload" ;;
+        *)
+          pkg=$(pkg_owner "$payload")
+          if [ -n "$pkg" ]; then
+            warn "packaged payload $payload belongs to $pkg; not removing"
+          else
+            refs=$(persistence_refs "$payload" 2>/dev/null || true)
+            cleanup_payload=true
+          fi
+          ;;
+      esac
+    fi
+
+    unit=$(ps_field "$pid" unit)
+    if [ -n "$unit" ] && case "$unit" in *.service) true ;; *) false ;; esac; then
+      if case "$unit" in systemd-*.service|user@*.service|dbus*.service|getty*.service|sddm*.service|gdm*.service|lightdm*.service|ssh.service|sshd.service|cron.service|NetworkManager.service|NetworkManager-*.service|auditd.service|rsyslog.service|docker.service|docker.socket|containerd.service|cups.service|cups-browsed.service|ufw.service|apparmor.service|networking.service|resolvconf.service|polkit.service) true ;; *) false ;; esac; then
+        ignored_unit="$unit"
+      else
+        up=$(systemctl show -p FragmentPath "$unit" 2>/dev/null | cut -d= -f2)
+        if [ "$DRY_RUN" = true ]; then
+          echo "would stop and disable $unit"
+          if [ -n "$up" ] && [ -f "$up" ]; then
+            pkg=$(pkg_owner "$up")
+            [ -n "$pkg" ] && echo "would preserve packaged unit file $up ($pkg)" || echo "would remove unit file $up"
+          fi
+        else
+          systemctl stop "$unit" 2>/dev/null || true
+          systemctl disable "$unit" 2>/dev/null || true
+        fi
+        if [ "$DRY_RUN" != true ] && [ -n "$up" ] && [ -f "$up" ]; then
+          pkg=$(pkg_owner "$up")
+          if [ -n "$pkg" ]; then
+            pkg_remove "$pkg"
+          elif [ -f "$up" ]; then
+            rm -f "$up"
+            systemctl daemon-reload 2>/dev/null || true
+          fi
+        fi
+      fi
+    fi
+
+    pgid=$(ps_field "$pid" pgid)
+    if [ "$DRY_RUN" = true ]; then
+      echo "would stop process $pid (group $pgid)"
+    else
+      # avoid killing system groups
+      if [ "$pgid" = 1 ] || [ "$pgid" = 0 ] || [ "$pgid" = "$(pgrep -u root systemd | head -1)" ]; then
+        kill -STOP "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
+      else
+        kill -STOP "-$pgid" 2>/dev/null || true
+        kill -9 "-$pgid" 2>/dev/null || true
+      fi
+    fi
+
+    if [ "$cleanup_payload" = true ]; then
+      if [ "$DRY_RUN" = true ]; then
+        echo "would remove payload $payload"
+      elif rm -f -- "$payload"; then
+        echo "Payload removed: $payload"
+      else
+        warn "rm failed: $payload"
+      fi
+      if [ -n "$refs" ]; then
+        IFS=',' read -ra ref_paths <<< "$refs"
+        for ref in "${ref_paths[@]}"; do
+          [ -f "$ref" ] || continue
+          if persistence_file_is_shared "$ref"; then
+            mapfile -t lines < <(grep -F -- "$payload" "$ref" 2>/dev/null || true)
+            removed_ref=false
+            for line in "${lines[@]}"; do
+              [ -n "$line" ] || continue
+              if [ "$DRY_RUN" = true ]; then
+                echo "would clear persistence line in $ref: $line"
+              else
+                remove_cron_line "$ref" "$line" && removed_ref=true || warn "edit failed: $ref"
+              fi
+            done
+            [ "$removed_ref" = true ] && echo "Persistence removed: $ref"
+          else
+            pkg=$(pkg_owner "$ref")
+            if [ -n "$pkg" ]; then
+              warn "packaged persistence $ref belongs to $pkg; not removing"
+              continue
+            fi
+            if [ "$DRY_RUN" = true ]; then
+              echo "would remove persistence $ref"
+            elif rm -f -- "$ref"; then
+              echo "Persistence removed: $ref"
+            else
+              warn "rm failed: $ref"
+            fi
+          fi
+        done
+      fi
+      case "$refs" in *systemd*) [ "$DRY_RUN" = true ] || systemctl daemon-reload 2>/dev/null || true ;; esac
+    fi
+    [ -n "${ignored_unit:-}" ] && warn "Ignoring $ignored_unit (Critical Service)"
+    ;;
+  pack)
+    [ $# -gt 0 ] || die "pack needs pid or :port"
+    t="$1"; pid="$t"
+    case "$t" in :*) pid=$(get_pid_from_port "${t#:}") ;; esac
+    validate_pid "$pid"
+    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+    [ -n "$exe" ] || die "no exe for pid $pid"
+    printf 'pid  %s\npath %s\n' "$pid" "$exe"
+    pkg=$(pkg_owner "$exe")
+    [ -n "$pkg" ] && printf 'owner %s\n' "$pkg" || echo "owner NOT FOUND (custom build)"
+    ;;
+  scan)
+    readme_load 2>/dev/null || true
+    rows=$(scan_processes)
+    [ -n "$rows" ] || { echo "no suspicious procs"; exit 0; }
+    printf '%-8s %s\n' PID FINDING
+    while IFS='|' read -r _ pid detail _; do printf '%-8s %s\n' "$pid" "$detail"; done <<< "$rows"
+    ;;
+  -h|--help) usage ;;
+  *) die "unknown processes cmd: $command" ;;
+esac

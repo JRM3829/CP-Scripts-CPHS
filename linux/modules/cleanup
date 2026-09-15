@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+source "${WYN_HOME}/libs/tree.sh"
+
+AUTO_YES=false
+DO_REMOVE=false
+FILE_PATHS=()
+FILE_REASONS=()
+PROC_PIDS=()
+PROC_CMDS=()
+
+usage() {
+  printf "Usage: wyn cleanup [options]\n\n"
+  printf "Scans for obviously malicious artifacts (suspicious autostart entries,\n"
+  printf "cron jobs, hidden executables, SSH keys, unauthorized media) and reports\n"
+  printf "them with SHA-256 hashes for forensic documentation. Does NOT remove\n"
+  printf "anything unless --remove is given: these items are usually CyberPatriot\n"
+  printf "forensics evidence and must be documented before deletion.\n\n"
+  printf "Options:\n"
+  printf "  -h, --help        Show help\n"
+  printf "  -r, --remove      Remove items and terminate related processes after\n"
+  printf "                    review (DESTROYS forensic evidence)\n"
+  printf "  -y, --yes         With --remove: skip the confirmation prompt\n"
+  printf "  -n, --dry-run     Scan and report only (default behaviour)\n"
+  exit 0
+}
+
+flag_file() {
+  local f="$1" p
+  for p in "${CLEANUP_WHITELIST[@]:-}"; do
+    [ -n "$p" ] && case "$f" in $p) return 0 ;; esac
+  done
+  FILE_PATHS+=("$f")
+  FILE_REASONS+=("$2")
+}
+
+is_suspicious_cmd() {
+  printf '%s' "$1" | grep -qE '/\.|/tmp/|/var/tmp/|/dev/tcp|(^|[^a-z])nc([^a-z]|$)|ncat|base64|wget[[:space:]]|curl[[:space:]]|python[0-9]*[[:space:]]+-c|perl[[:space:]]+-e'
+}
+
+log_file_contents() {
+  local f="$1" size is_text=""
+  [ -f "$f" ] && [ -r "$f" ] || { printf '      (unreadable)\n'; return 0; }
+  size=$(wc -c < "$f" 2>/dev/null || echo 0)
+  [ "$size" -gt 1048576 ] && { printf '      (contents omitted - %s bytes)\n' "$size"; return 0; }
+  if command -v file >/dev/null 2>&1; then
+    file -b "$f" 2>/dev/null | grep -qiE 'text|script|empty' && is_text=1
+  elif ! od -An -tx1 -N 8192 "$f" 2>/dev/null | grep -q ' 00 '; then
+    is_text=1
+  fi
+  if [ -n "$is_text" ]; then
+    sed 's/^/      /' "$f" 2>/dev/null || printf '      (unable to dump)\n'
+  else
+    od -A x -t x1z -v "$f" 2>/dev/null | sed 's/^/      /' || printf '      (unable to dump)\n'
+  fi
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    -r|--remove) DO_REMOVE=true ;;
+    -y|--yes) AUTO_YES=true ;;
+    -n|--dry-run) : ;;
+    *) die "bad option: $1" ;;
+  esac
+  shift
+done
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  exe=$(grep -m1 -i '^[[:space:]]*Exec=' "$f" | sed -E 's/^[[:space:]]*Exec=[[:space:]]*//' || true)
+  case "$f" in
+    /root/.config/autostart/*) flag_file "$f" "root autostart${exe:+: $exe}" ;;
+    *) [ -n "$exe" ] && is_suspicious_cmd "$exe" && flag_file "$f" "suspicious autostart: $exe" ;;
+  esac
+done < <(find /root/.config/autostart /home/*/.config/autostart -maxdepth 1 -name '*.desktop' -type f 2>/dev/null)
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in \#*) continue ;; esac
+    if is_suspicious_cmd "$line"; then
+      flag_file "$f" "suspicious cron: $line"
+      break
+    fi
+  done < "$f"
+done < <(find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly /etc/crontab /var/spool/cron/crontabs -type f 2>/dev/null)
+
+while IFS= read -r f; do
+  [ -n "$f" ] && flag_file "$f" "hidden executable"
+done < <(find /home /root /usr /var /opt /tmp -xdev -type f -name '.*' -perm -111 2>/dev/null)
+
+while IFS= read -r f; do
+  [ -n "$f" ] && flag_file "$f" "suspicious filename"
+done < <(find /tmp /var/tmp /home /opt /usr/local -xdev -type f \( -iname '*backdoor*' -o -iname '*malware*' -o -iname '*keylog*' -o -iname '*ransomware*' -o -iname '*payload*' -o -iname '*reverse_shell*' \) 2>/dev/null)
+
+while IFS= read -r f; do
+  [ -n "$f" ] && flag_file "$f" "script in /tmp"
+done < <(find /tmp /var/tmp -xdev -type f \( -name '*.sh' -o -name '*.py' -o -name '*.pl' -o -name '*.rb' \) 2>/dev/null)
+
+while IFS= read -r f; do
+  [ -n "$f" ] && flag_file "$f" "authorized_keys"
+done < <(find /root /home -xdev -name authorized_keys -type f 2>/dev/null)
+
+if [ ${#ARTIFACT_EXTS[@]} -gt 0 ]; then
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    for e in "${ARTIFACT_EXTS[@]}"; do
+      [ -n "$e" ] && case "${f,,}" in *".${e,,}") flag_file "$f" "media (.${e,,})"; break ;; esac
+    done
+  done < <(find /home /root -xdev -type f 2>/dev/null)
+fi
+
+declare -A seen=()
+declare -a dp=() dr=()
+for i in "${!FILE_PATHS[@]}"; do
+  [ -n "${seen[${FILE_PATHS[$i]}]:-}" ] && continue
+  seen["${FILE_PATHS[$i]}"]=1
+  dp+=("${FILE_PATHS[$i]}")
+  dr+=("${FILE_REASONS[$i]}")
+done
+FILE_PATHS=("${dp[@]}")
+FILE_REASONS=("${dr[@]}")
+
+for pid_path in /proc/[0-9]*; do
+  [ -d "$pid_path" ] || continue
+  pid="${pid_path#/proc/}"
+  is_self_or_ancestor "$pid" && continue
+  cmd=$(get_process_cmdline "$pid") || continue
+  for f in "${FILE_PATHS[@]}"; do
+    case "$cmd" in *"$f"*) PROC_PIDS+=("$pid"); PROC_CMDS+=("$cmd"); break ;; esac
+  done
+done
+
+if [ ${#FILE_PATHS[@]} -eq 0 ] && [ ${#PROC_PIDS[@]} -eq 0 ]; then
+  echo "no artifacts"
+else
+  for i in "${!FILE_PATHS[@]}"; do
+    h=$(sha256sum "${FILE_PATHS[$i]}" 2>/dev/null | awk '{print $1}')
+    printf '%s  (%s)\n' "${FILE_PATHS[$i]}" "${FILE_REASONS[$i]}"
+    printf '  sha256 %s\n' "${h:-(unreadable)}"
+  done
+  for i in "${!PROC_PIDS[@]}"; do
+    printf 'pid %s: %s\n' "${PROC_PIDS[$i]}" "${PROC_CMDS[$i]}"
+  done
+fi
+
+if [ "$DO_REMOVE" = true ]; then
+  [ ${#FILE_PATHS[@]} -eq 0 ] && [ ${#PROC_PIDS[@]} -eq 0 ] && { echo "nothing to remove"; exit 0; }
+  if [ "$AUTO_YES" = true ] || confirm "remove ${#FILE_PATHS[@]} items / ${#PROC_PIDS[@]} procs? (destroys evidence)" n; then
+    for i in "${!FILE_PATHS[@]}"; do
+      f="${FILE_PATHS[$i]}"
+      printf '\n[contents of %s]\n' "$f"
+      log_file_contents "$f"
+      if rm -f "$f"; then
+        printf 'removed %s\n' "$f"
+      else
+        warn "rm failed: $f"
+      fi
+    done
+    declare -A killed=()
+    for i in "${!PROC_PIDS[@]}"; do
+      pid="${PROC_PIDS[$i]}"
+      [ -n "${killed[$pid]:-}" ] && continue
+      if [ -d "/proc/$pid" ]; then
+        read -ra g <<< "$(build_process_group "$pid" 2>/dev/null || true)"
+        [ ${#g[@]} -gt 0 ] || g=("$pid")
+      else
+        g=("$pid")
+      fi
+      for gp in "${g[@]}"; do
+        [ -n "${killed[$gp]:-}" ] && continue
+        killed[$gp]=1
+        is_self_or_ancestor "$gp" && continue
+        kill "$gp" 2>/dev/null && printf 'killed %s\n' "$gp" || warn "kill failed: $gp"
+      done
+    done
+  else
+    echo "skipped"
+  fi
+else
+  echo "report only; run 'wyn cleanup --remove' to delete"
+fi

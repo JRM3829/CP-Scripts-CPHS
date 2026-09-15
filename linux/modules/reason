@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+source "${WYN_HOME}/libs/tree.sh"
+source "${WYN_HOME}/libs/risk.sh"
+
+reason_usage() {
+  printf "Usage: wyn reason <target> [options]\n\n"
+  printf "Targets:\n"
+  printf "  :PORT      Analyze processes listening on a specific port (e.g., :53)\n"
+  printf "  PID        Analyze a specific Process ID (e.g., 1234)\n"
+  printf "  NAME       Analyze by process name (e.g., nginx)\n\n"
+  printf "Options:\n"
+  printf "  -e, --env  Dump the target's environment (secrets redacted)\n"
+  exit 0
+}
+
+rule_category() {
+  case "$1" in
+    BANNER_RISK|BLACKLIST_PORT) echo Network ;;
+    SHELL_ON_SOCKET|BLACKLISTED_SOFTWARE|CONTENT_MATCH|UNPACKAGED) echo Execution ;;
+    STEALTH_NETWORK|MEMFD_EXEC|DELETED_BIN|HIDDEN_PATH|MASQUERADE) echo Evasion ;;
+    ROOT|SETUID_BIN|FILE_CAPS|PATH_HIJACK) echo Privilege ;;
+    LD_PRELOAD|PERSISTENCE) echo Persistence ;;
+    PKG_TAMPER) echo Integrity ;;
+    *) echo Context ;;
+  esac
+}
+
+rule_detail() {
+  local flag="$1" detail="$2" location
+  case "$flag" in
+    BANNER_RISK)
+      location="${detail##* on }"
+      printf 'Shell banner on %s' "${location%:*}"
+      ;;
+    SHELL_ON_SOCKET) printf 'Backdoor payload executed' ;;
+    STEALTH_NETWORK) printf 'No controlling TTY' ;;
+    ROOT) printf 'Running with root rights' ;;
+    PERSISTENCE)
+      case "$detail" in
+        *cron*) printf 'Cron job restarts target: %s' "$detail" ;;
+        *) printf '%s: %s' "$(flag_help "$flag")" "$detail" ;;
+      esac
+      ;;
+    *) printf '%s%s' "$(flag_help "$flag")" "${detail:+: $detail}" ;;
+  esac
+}
+
+print_risk_overview() {
+  local shell_detected="$1"
+  shift
+  local group_pids=("$@")
+
+  declare -A hits=()
+
+  local pid weight flag detail
+  for pid in "${group_pids[@]}"; do
+    local pname bin
+    pname=$(get_process_name "$pid" 2>/dev/null || echo "unknown")
+    bin=$(get_process_bin "$pid" 2>/dev/null || echo "unknown")
+
+    is_trusted_name "$pname" "$bin" && continue
+
+    local net_info
+    net_info=$(sudo lsof -p "$pid" -i -a -P -n 2>/dev/null || true)
+
+    while IFS="|" read -r weight flag detail; do
+      [[ -n "$flag" ]] || continue
+      hits[$flag]="${detail:-$pname}"
+    done < <(risk_signals "$pid" aggregate "$net_info" 2>/dev/null || true)
+  done
+
+  if [[ "$shell_detected" == true ]]; then
+    hits[SHELL_ON_SOCKET]="a listening socket executed our command"
+  fi
+
+  if [[ "${BANNER_RISK_SCORE:-0}" -gt 0 ]]; then
+    hits[BANNER_RISK]="${BANNER_RISK_DETAIL:-suspicious banner}"
+  fi
+
+  printf "\n[+] RISK OVERVIEW\n\n"
+
+  if [[ ${#hits[@]} -eq 0 ]]; then
+    printf "No rules triggered.\n"
+  else
+    printf "%-17s %-14s %s\n" RULE CATEGORY DETAILS
+    printf "───────────────  ────────────  ───────────────────────────\n"
+    local -a order=(BANNER_RISK SHELL_ON_SOCKET STEALTH_NETWORK ROOT BLACKLIST_PORT BLACKLISTED_SOFTWARE CONTENT_MATCH UNPACKAGED MEMFD_EXEC DELETED_BIN HIDDEN_PATH MASQUERADE SETUID_BIN FILE_CAPS PATH_HIJACK LD_PRELOAD PERSISTENCE PKG_TAMPER UNKNOWN_BIN SHELL_PARENT TEMP_EXEC)
+    for flag in "${order[@]}"; do
+      [[ -v "hits[$flag]" ]] || continue
+      printf "%-17s %-14s %s\n" "$flag" "[$(rule_category "$flag")]" "$(rule_detail "$flag" "${hits[$flag]}")"
+    done
+  fi
+}
+
+print_network_activity() {
+  local group_pids=("$@")
+  printf "\n[+] NETWORK OBSERVATIONS\n"
+  
+  local found_net=false
+  local shell_detected=false
+
+  for pid in "${group_pids[@]}"; do
+    local lsof_out
+    lsof_out=$(sudo lsof -p "$pid" -i -a -P -n 2>/dev/null | tail -n +2 || true)
+    if [[ -n "$lsof_out" ]]; then
+      found_net=true
+      while read -r line; do
+        [[ -z "$line" ]] && continue
+        local proto state addr port banner probe_val probe_display
+        proto=$(echo "$line" | awk '{print $8}')
+        addr=$(echo "$line" | awk '{print $9}')
+        state=$(echo "$line" | awk '{print $10}' | tr -d '()')
+        [[ -z "$state" ]] && state="UNKNOWN"
+        
+        if [[ "$state" == "LISTEN" ]]; then
+          local host brisk
+          brisk=""
+          port="${addr##*:}"
+          host="${addr%:*}"
+          host="${host#[}"; host="${host%]}"
+          case "$host" in ""|"*"|"0.0.0.0"|"::"|"[::]") host="127.0.0.1" ;; esac
+
+          banner=$(grab_service_banner "$port" "$host" 2>/dev/null || echo "N/A")
+          probe_val=$(classify_probe "$(probe_port "$port" "$host" 2>/dev/null || true)" 2>/dev/null || echo "N/A")
+
+          case "$probe_val" in
+            REVERSE/BIND*|SHELL\ PROMPT*) shell_detected=true ;;
+          esac
+
+          if brisk=$(check_banner_risk "$banner" 2>/dev/null); then
+            if [[ "${brisk%|*}" -gt "${BANNER_RISK_SCORE:-0}" ]]; then
+              BANNER_RISK_SCORE="${brisk%|*}"
+              BANNER_RISK_DETAIL="${brisk#*|} on ${host}:${port}"
+            fi
+          fi
+
+          case "$probe_val" in
+            REVERSE/BIND*) probe_display="Command execution confirmed (SHELL_ON_SOCKET)" ;;
+            SHELL\ PROMPT*) probe_display="Interactive shell prompt returned${brisk:+ (${brisk#*|})}" ;;
+            *) probe_display="$probe_val" ;;
+          esac
+
+          printf "    Socket:  %s %s (%s)\n" "${proto^^}" "$addr" "$state"
+          printf "    Banner:  \"%s\"\n" "$banner"
+          printf "    Probe:   %s\n" "$probe_display"
+        else
+          printf "    Socket:  %s %s (%s)\n" "${proto^^}" "$addr" "$state"
+        fi
+      done <<< "$lsof_out"
+    fi
+  done
+  
+  if [[ "$found_net" == false ]]; then
+    printf "    No sockets observed.\n"
+  fi
+
+  SHELL_DETECTED_FLAG="$shell_detected"
+}
+
+print_forensic_details() {
+  local group_pids=("$@")
+
+  for pid in "${group_pids[@]}"; do
+    local start_time cwd cmd bin_path hash owner pkg ppid pname_parent
+    local w_disp x_disp gui_status
+
+    start_time=$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//' || echo "unknown")
+    [[ -n "$start_time" ]] || start_time="unknown"
+    cwd=$(sudo readlink -f "/proc/$pid/cwd" 2>/dev/null || echo "denied")
+    cmd=$(get_process_cmdline "$pid" 2>/dev/null || true)
+    [[ -z "$cmd" ]] && cmd="(kernel thread)"
+    bin_path=$(get_process_bin "$pid" 2>/dev/null || echo "Unknown")
+
+    hash="N/A"
+    owner="unpackaged"
+    if [[ -f "$bin_path" ]]; then
+      hash=$(sha256sum "$bin_path" 2>/dev/null | awk '{print $1}' || echo "N/A")
+      pkg=$(pkg_owner "$bin_path" 2>/dev/null || true)
+      if [[ -n "$pkg" ]]; then
+        owner="$pkg"
+        pkg_file_tampered "$bin_path" && owner="$pkg (MODIFIED since install)"
+      fi
+    else
+      owner="binary missing or deleted"
+    fi
+
+    ppid=$(ps_field "$pid" ppid 2>/dev/null || echo "unknown")
+    [[ -n "$ppid" ]] || ppid="unknown"
+    pname_parent="unknown"
+    if [[ "$ppid" != "unknown" ]]; then
+      pname_parent=$(get_process_name "$ppid" 2>/dev/null || echo "unknown")
+    fi
+
+    w_disp=$(get_process_env_var "$pid" "WAYLAND_DISPLAY" 2>/dev/null || true)
+    x_disp=$(get_process_env_var "$pid" "DISPLAY" 2>/dev/null || true)
+    if [[ -n "$w_disp" ]]; then
+      gui_status="Yes (Wayland ${w_disp})"
+    elif [[ -n "$x_disp" ]]; then
+      gui_status="Yes (X11 ${x_disp})"
+    else
+      gui_status="No"
+    fi
+
+    printf "\n[+] FORENSIC EVIDENCE (PID %s)\n" "$pid"
+    printf "    %-14s%s (%s)\n" "Binary:" "$bin_path" "$owner"
+    printf "    %-14s%s\n" "Cmdline:" "$cmd"
+    printf "    %-14s%s\n" "SHA-256:" "$hash"
+    printf "    %-14s%s (PID %s)\n" "Parent:" "$pname_parent" "$ppid"
+    printf "    %-14sCWD: %s | GUI: %s | Started: %s\n" "Environment:" "$cwd" "$gui_status" "$start_time"
+  done
+}
+
+print_env() {
+  local pid="$1"
+  printf "\n[env] pid %s\n" "$pid"
+  sudo cat "/proc/$pid/environ" 2>/dev/null | tr '\0' '\n' | sort | \
+    sed -E '/(PASS|SECRET|TOKEN|KEY|CREDENTIAL|AUTH|PRIVATE|CERT|DSN)/I s/=.*/=<redacted>/' | grep -v '^$' || true
+}
+
+main() {
+  [[ $# -eq 0 ]] && reason_usage
+
+  local env_only=false target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -e | --env) env_only=true ;;
+      -h | --help) reason_usage ;;
+      *)
+        [[ -n "$target" ]] && die "Unknown argument: $1 (see: wyn reason --help)"
+        target="$1"
+        ;;
+    esac
+    shift
+  done
+
+  [[ -z "$target" ]] && reason_usage
+
+  local target_pid
+  target_pid=$(resolve_target "$target")
+
+  if [[ "$env_only" == "true" ]]; then
+    print_env "$target_pid"
+    exit 0
+  fi
+  
+  local -a group_pids=()
+  read -ra group_pids <<< "$(build_process_group "$target_pid")"
+  
+  local root_pid="${group_pids[0]}"
+  local root_name root_user target_label="$target"
+  root_name=$(get_process_name "$root_pid" 2>/dev/null || echo "unknown")
+  root_user=$(ps_field "$root_pid" user 2>/dev/null || echo "unknown")
+  [[ -n "$root_user" ]] || root_user="unknown"
+  case "$target" in :*) target_label="127.0.0.1:${target#:}" ;; esac
+
+  printf "[+] TARGET: %s\n" "$target_label"
+  printf "    Process: %s (PID %s) | User: %s | Group Size: %d\n" "$root_name" "$root_pid" "$root_user" "${#group_pids[@]}"
+  
+  SHELL_DETECTED_FLAG=false
+  BANNER_RISK_SCORE=0
+  BANNER_RISK_DETAIL=""
+  print_network_activity "${group_pids[@]}"
+  
+  print_risk_overview "$SHELL_DETECTED_FLAG" "${group_pids[@]}"
+  print_forensic_details "${group_pids[@]}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

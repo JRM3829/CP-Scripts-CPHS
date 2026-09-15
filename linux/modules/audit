@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source "${WYN_HOME}/conf/wyn.conf"
+source "${WYN_HOME}/libs/core.sh"
+
+INSTALL_MISSING="${INSTALL_MISSING:-true}"
+RKHUNTER_FP_PATTERN="${RKHUNTER_FP_PATTERN:-steamwebhelper|Steam|Valve}"
+
+usage() {
+  printf "Usage: wyn audit [options]\n\n"
+  printf "Checks for chkrootkit and rkhunter, installs them if missing,\n"
+  printf "and runs a malware sweep. Verifies that the audit rule set is\n"
+  printf "active and reports any SUID/SGID binaries not on the known-good\n"
+  printf "list from conf/suid-sgid.conf.\n\n"
+  printf "Options:\n"
+  printf "  -h, --help       Show help\n"
+  exit 0
+}
+
+if [ -f "${WYN_HOME}/conf/suid-sgid.conf" ]; then
+  source "${WYN_HOME}/conf/suid-sgid.conf"
+else
+  warn "conf/suid-sgid.conf not found - SUID/SGID check skipped"
+fi
+
+cleanup() {
+  local code=$?
+  [ "$code" -ne 0 ] && echo "interrupted or failed (code $code)" >&2
+  exit "$code"
+}
+trap cleanup INT TERM EXIT
+
+print_hits() {
+  local title="$1" none="$2" count="$3"; shift 3
+  echo "== $title =="
+  if [ $# -eq 0 ]; then
+    echo "  $none"
+  else
+    echo "  $count:"
+    for h in "$@"; do echo "    $h"; done
+  fi
+}
+
+has_net() { ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 || ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; }
+
+install_pkg() {
+  local pkg="$1"
+  command -v "$pkg" >/dev/null 2>&1 && return 0
+  [ "$INSTALL_MISSING" != true ] && { warn "pkg $pkg missing (INSTALL_MISSING=false)"; return 0; }
+  echo "installing $pkg"
+  has_net || { warn "no network - cannot install $pkg"; return 1; }
+  pkg_manager >/dev/null 2>&1 || { warn "no supported pkg manager"; return 1; }
+  pkg_install "$pkg" || { warn "install failed: $pkg"; return 1; }
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    *) die "unknown opt: $1" ;;
+  esac
+  shift
+done
+
+echo "security scanner suite on $(hostname)"
+
+install_pkg chkrootkit || warn "setup failed: chkrootkit"
+install_pkg rkhunter || warn "setup failed: rkhunter"
+install_pkg unhide || warn "setup failed: unhide"
+install_pkg lynis || warn "setup failed: lynis"
+install_pkg aide || warn "setup failed: aide"
+install_pkg auditd || warn "setup failed: auditd"
+install_pkg clamav || warn "setup failed: clamav"
+
+if require_tool chkrootkit; then sudo chkrootkit -q || warn "chkrootkit reported issues"; fi
+if require_tool rkhunter; then { sudo rkhunter --check --sk --nocolor 2>/dev/null || true; } | grep -vE "$RKHUNTER_FP_PATTERN" || true; fi
+if require_tool unhide; then sudo unhide sys proc || warn "unhide finished non-zero"; fi
+if require_tool lynis; then sudo lynis audit system --quick --warnings-only --no-colors || warn "lynis warnings"; fi
+if require_tool aide; then
+  if [ ! -f /var/lib/aide/aide.db ] && [ ! -f /var/lib/aide/aide.db.gz ]; then
+    echo "initializing AIDE database"
+    sudo aideinit 2>/dev/null || sudo aide --init 2>/dev/null || warn "aide init failed"
+    [ -f /var/lib/aide/aide.db.new ] && sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+  else
+    sudo aide --check 2>/dev/null || warn "aide found modified files"
+  fi
+fi
+if require_tool auditctl; then
+  command -v systemctl >/dev/null 2>&1 && { sudo systemctl is-active --quiet auditd || sudo systemctl start auditd || warn "auditd start failed"; }
+  sudo auditctl -l || warn "auditctl query failed"
+fi
+if require_tool clamscan; then
+  if has_net; then
+    sudo systemctl stop clamav-freshclam 2>/dev/null || true
+    sudo freshclam --quiet 2>/dev/null || warn "freshclam update failed"
+    sudo systemctl start clamav-freshclam 2>/dev/null || true
+  fi
+  sudo clamscan -r -i --exclude-dir="^/sys" --exclude-dir="^/proc" --exclude-dir="^/dev" /home /root /tmp /var/tmp || warn "clamscan findings"
+fi
+
+if declare -p KNOWN_GOOD >/dev/null 2>&1; then
+  declare -a extra=()
+  while IFS= read -r item; do
+    in_list "$item" "${KNOWN_GOOD[@]}" || extra+=("$item")
+  done < <(find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | sort)
+  print_hits "SUID/SGID outside approved list" "none - all match approved list" "${#extra[@]} not approved" "${extra[@]}"
+else
+  warn "no KNOWN_GOOD list - SUID/SGID check skipped"
+fi
+
+declare -a wf=()
+mapfile -t wf < <(find / -xdev -type f -perm -0002 2>/dev/null)
+print_hits "World-writable files" "none" "${#wf[@]} found" "${wf[@]}"
+declare -a wd=()
+mapfile -t wd < <(find / -xdev -type d -perm -0002 2>/dev/null)
+print_hits "World-writable dirs" "none" "${#wd[@]} found" "${wd[@]}"
+
+declare -a sui=()
+mapfile -t sui < <(find /usr/bin /usr/sbin -perm -4000 -type f 2>/dev/null | grep -E 'python|perl|lua|php|\bnc\b|ruby|vim|find')
+print_hits "Escalation-prone SUID binaries" "none" "${#sui[@]} with escalation risk" "${sui[@]}"
+
+declare -a hid=()
+mapfile -t hid < <(find /usr/bin /usr/sbin /bin -name '.*' -type f 2>/dev/null)
+print_hits "Hidden binaries in system paths" "none" "${#hid[@]} found" "${hid[@]}"
+
+echo "scanner suite done"
