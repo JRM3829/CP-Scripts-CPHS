@@ -1,24 +1,36 @@
 #!/bin/bash
-# otp_decrypt.sh - decrypt an A-Z one-time pad
+# otp_decrypt.sh - decrypt an A-Z one-time pad (plain = cipher - pad mod 26)
+
+alpha=ABCDEFGHIJKLMNOPQRSTUVWXYZ
 
 read -rp "Ciphertext: " cipher
 read -rp "One-time pad: " pad
 
-# Keep only letters and convert to uppercase (ignores spaces, digits, punctuation)
-cipher=$(echo "$cipher" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z')
-pad=$(echo "$pad" | tr -cd 'A-Za-z' | tr 'a-z' 'A-Z')
+# Uppercase, strip carriage returns; pad keeps letters only
+cipher=$(printf '%s' "${cipher^^}" | tr -d '\r')
+pad=$(printf '%s' "${pad^^}" | tr -cd 'A-Z')
 
-if (( ${#pad} < ${#cipher} )); then
-  echo "Error: pad (${#pad} letters) is shorter than ciphertext (${#cipher} letters)." >&2
+# Count letters in the ciphertext
+letters=$(printf '%s' "$cipher" | tr -cd 'A-Z')
+if (( ${#pad} < ${#letters} )); then
+  echo "Error: pad has ${#pad} letters but ciphertext has ${#letters}." >&2
   exit 1
 fi
 
 plain=""
+j=0
 for ((i = 0; i < ${#cipher}; i++)); do
-  c=$(printf '%d' "'${cipher:i:1}")   # ASCII code of ciphertext letter
-  k=$(printf '%d' "'${pad:i:1}")      # ASCII code of pad letter
-  p=$(( (c - k + 26) % 26 + 65 ))     # subtract mod 26, map back to A-Z
-  plain+=$(printf "\\$(printf '%03o' "$p")")
+  ch=${cipher:i:1}
+  if [[ $ch == [A-Z] ]]; then
+    k=${pad:j:1}; ((j++))
+    c=${alpha%%"$ch"*}; c=${#c}     # index of cipher letter (A=0)
+    kk=${alpha%%"$k"*}; kk=${#kk}   # index of pad letter
+    plain+=${alpha:(c - kk + 26) % 26:1}
+  else
+    plain+=$ch                      # keep spaces/punctuation as-is
+  fi
 done
 
+echo "Letters in ciphertext: ${#letters}"
+echo "Letters used from pad: $j"
 echo "Plaintext: $plain"
