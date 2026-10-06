@@ -1,36 +1,27 @@
 #!/bin/bash
-# otp_decrypt.sh - decrypt an A-Z one-time pad (plain = cipher - pad mod 26)
+# otp_xor.sh - decrypt/encrypt a hex one-time pad via XOR
 
-alpha=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+read -rp "Ciphertext (hex): " cipher
+read -rp "One-time pad (hex): " pad
 
-read -rp "Ciphertext: " cipher
-read -rp "One-time pad: " pad
+# strip whitespace and optional 0x prefix, lowercase
+cipher=$(echo "${cipher#0x}" | tr -d '[:space:]' | tr 'A-F' 'a-f')
+pad=$(echo "${pad#0x}" | tr -d '[:space:]' | tr 'A-F' 'a-f')
 
-# Uppercase, strip carriage returns; pad keeps letters only
-cipher=$(printf '%s' "${cipher^^}" | tr -d '\r')
-pad=$(printf '%s' "${pad^^}" | tr -cd 'A-Z')
-
-# Count letters in the ciphertext
-letters=$(printf '%s' "$cipher" | tr -cd 'A-Z')
-if (( ${#pad} < ${#letters} )); then
-  echo "Error: pad has ${#pad} letters but ciphertext has ${#letters}." >&2
-  exit 1
+if (( ${#cipher} % 2 )); then
+  echo "Error: ciphertext has an odd number of hex digits." >&2; exit 1
+fi
+if (( ${#pad} < ${#cipher} )); then
+  echo "Error: pad (${#pad} hex digits) is shorter than ciphertext (${#cipher})." >&2; exit 1
 fi
 
-plain=""
-j=0
-for ((i = 0; i < ${#cipher}; i++)); do
-  ch=${cipher:i:1}
-  if [[ $ch == [A-Z] ]]; then
-    k=${pad:j:1}; ((j++))
-    c=${alpha%%"$ch"*}; c=${#c}     # index of cipher letter (A=0)
-    kk=${alpha%%"$k"*}; kk=${#kk}   # index of pad letter
-    plain+=${alpha:(c - kk + 26) % 26:1}
-  else
-    plain+=$ch                      # keep spaces/punctuation as-is
-  fi
+out=""
+for ((i = 0; i < ${#cipher}; i += 2)); do
+  b=$(( 0x${cipher:i:2} ^ 0x${pad:i:2} ))
+  out+=$(printf '%02x' "$b")
 done
 
-echo "Letters in ciphertext: ${#letters}"
-echo "Letters used from pad: $j"
-echo "Plaintext: $plain"
+echo "Plaintext (hex): $out"
+echo -n "Plaintext (text): "
+echo -e "$(echo "$out" | sed 's/../\\x&/g')"
+echo
