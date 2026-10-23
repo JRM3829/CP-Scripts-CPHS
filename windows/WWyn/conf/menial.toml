@@ -1,0 +1,372 @@
+# wyn menial. sections follow the team "Windows Hardening" checklist.
+# new registry value: copy a block
+#   [[reg]]
+#   desc = "what it does (shown in output)"
+#   hive = "HKLM"              # HKLM or HKCU
+#   key  = 'SOFTWARE\...'      # single quotes so \ needs no escaping
+#   name = "ValueName"
+#   data = 1                   # integer -> REG_DWORD, "string" -> REG_SZ
+#
+# Nothing here is specific to one round; README-driven choices belong in their own module.
+
+# --- Windows Update ---
+
+[[reg]]
+desc = "Windows Update service: automatic start"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\wuauserv'
+name = "Start"
+data = 2
+
+[[reg]]
+desc = "Automatic updates: enabled"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+name = "NoAutoUpdate"
+data = 0
+
+[[reg]]
+desc = "Automatic updates: auto download, notify to install"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+name = "AUOptions"
+data = 3
+
+# --- Group Policy ---
+
+[[reg]]
+desc = "Disable autoplay on all drives"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+name = "NoDriveTypeAutoRun"
+data = 255
+
+[[reg]]
+desc = "Disable autorun"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+name = "NoAutorun"
+data = 1
+
+[[reg]]
+desc = "SmartScreen for Explorer: enabled"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "EnableSmartScreen"
+data = 1
+
+[[reg]]
+desc = "SmartScreen for Explorer: warn"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "ShellSmartScreenLevel"
+data = "Warn"
+
+[[reg]]
+desc = "Remote Desktop: require SSL security layer"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "SecurityLayer"
+data = 2
+
+# --- Firewall ---
+# Local settings (what Windows Security toggles), then policy keys (apply after gpupdate /force or reboot).
+
+[[reg]]
+desc = "Firewall on: domain profile (local setting)"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: private profile (local setting)"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: public profile (local setting)"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: domain profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\DomainProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: private profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PrivateProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: public profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile'
+name = "EnableFirewall"
+data = 1
+
+# --- Action Center (Security Center); most READMEs require it enabled ---
+# Set in the registry: the service is protected, so Set-Service is denied even for admins.
+
+[[reg]]
+desc = "Security Center service: automatic start"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\wscsvc'
+name = "Start"
+data = 2
+
+[[reg]]
+desc = "Notification/Action Center not disabled by policy"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Explorer'
+name = "DisableNotificationCenter"
+data = 0
+
+# --- Remote Assistance / Remote Desktop ---
+
+[[reg]]
+desc = "Disable Remote Assistance"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Remote Assistance'
+name = "fAllowToGetHelp"
+data = 0
+
+[[reg]]
+desc = "Remote Desktop: require Network Level Authentication"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+name = "UserAuthentication"
+data = 1
+
+# --- Security Options ---
+
+[[reg]]
+desc = "Blank passwords allowed only at console"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "LimitBlankPasswordUse"
+data = 1
+
+[[reg]]
+desc = "Don't display user info when locked"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DontDisplayLockedUserId"
+data = 3
+
+[[reg]]
+desc = "Don't display last signed-in user"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DontDisplayLastUserName"
+data = 1
+
+[[reg]]
+desc = "Require Ctrl+Alt+Del to sign in"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DisableCAD"
+data = 0
+
+[[reg]]
+desc = "Enable UAC"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "EnableLUA"
+data = 1
+
+[[reg]]
+desc = "UAC: prompt admins on secure desktop"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "ConsentPromptBehaviorAdmin"
+data = 2
+
+[[reg]]
+desc = "Restrict anonymous enumeration of shares"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "RestrictAnonymous"
+data = 1
+
+[[reg]]
+desc = "Restrict anonymous enumeration of SAM accounts"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "RestrictAnonymousSAM"
+data = 1
+
+[[reg]]
+desc = "Don't store LM hashes"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "NoLMHash"
+data = 1
+
+[[reg]]
+desc = "NTLMv2 only"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "LmCompatibilityLevel"
+data = 5
+
+[[reg]]
+desc = "Disable WDigest plaintext credentials"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest'
+name = "UseLogonCredential"
+data = 0
+
+[[reg]]
+desc = "Disable automatic admin logon"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+name = "AutoAdminLogon"
+data = "0"
+
+# --- SMB (checklist: do LAST, only if README doesn't need SMB1) ---
+
+[[reg]]
+desc = "Disable SMBv1 server"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters'
+name = "SMB1"
+data = 0
+
+# commands run after all [[reg]]. powershell, as admin
+#   [[cmd]]
+#   desc  = "..."
+#   run   = '...'    # single quotes: \ and " need no escaping. ''' ... ''' for multi-line
+#   check = '...'    # optional: true = already done, skip
+
+# --- Account Policies (secpol.msc -> Account Policies) ---
+
+[[cmd]]
+desc = "Password policy: min length 10, max age 30, min age 10, history 5"
+run = 'net accounts /minpwlen:10 /maxpwage:30 /minpwage:10 /uniquepw:5'
+
+[[cmd]]
+desc = "Lockout policy: 5 attempts, 30 min duration, 30 min reset"
+run = 'net accounts /lockoutthreshold:5 /lockoutduration:30 /lockoutwindow:30'
+
+# Security template applied with secedit. Edit the lines between @' and '@.
+# User rights use built-in SIDs, so they work on any machine:
+#   *S-1-5-32-544 Administrators   *S-1-5-32-546 Guests   *S-1-5-11 Authenticated Users
+[[cmd]]
+desc = "Security template: password complexity, no reversible encryption, user rights"
+run = '''
+$inf = "$env:TEMP\wyn-sec.inf"; $db = "$env:TEMP\wyn-sec.sdb"
+@'
+[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[System Access]
+PasswordComplexity = 1
+ClearTextPassword = 0
+[Privilege Rights]
+SeNetworkLogonRight = *S-1-5-32-544,*S-1-5-11
+SeRemoteInteractiveLogonRight = *S-1-5-32-544
+SeDenyInteractiveLogonRight = *S-1-5-32-546
+SeDenyRemoteInteractiveLogonRight = *S-1-5-32-546
+SeTakeOwnershipPrivilege = *S-1-5-32-544
+'@ | Set-Content $inf -Encoding Unicode
+Remove-Item $db -ErrorAction SilentlyContinue
+secedit /configure /db $db /cfg $inf /quiet
+'''
+
+# Separate from the template above: older Windows 10 builds don't have this setting.
+[[cmd]]
+desc = "Allow Administrator account lockout"
+run = '''
+$inf = "$env:TEMP\wyn-sec-adm.inf"; $db = "$env:TEMP\wyn-sec-adm.sdb"
+@'
+[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[System Access]
+AllowAdministratorLockout = 1
+'@ | Set-Content $inf -Encoding Unicode
+Remove-Item $db -ErrorAction SilentlyContinue
+secedit /configure /db $db /cfg $inf /quiet
+'''
+
+# --- Audit Policy (checklist: audit everything) ---
+
+[[cmd]]
+desc = "Audit success and failure for all categories"
+run = 'auditpol /set /category:* /success:enable /failure:enable'
+
+# --- Accounts (checklist: disable built-in Administrator and Guest) ---
+
+[[cmd]]
+desc = "Disable built-in Administrator and Guest (found by SID, so renamed accounts count)"
+run = "Get-LocalUser | Where-Object { $_.SID -like '*-500' -or $_.SID -like '*-501' } | Disable-LocalUser"
+check = "-not (Get-LocalUser | Where-Object { ($_.SID -like '*-500' -or $_.SID -like '*-501') -and $_.Enabled })"
+
+# --- Windows Defender & Firewall ---
+
+[[cmd]]
+desc = "Firewall on for all profiles (takes effect now)"
+run = 'netsh advfirewall set allprofiles state on'
+check = "-not (Get-NetFirewallProfile -PolicyStore ActiveStore | Where-Object { -not $_.Enabled })"
+
+[[cmd]]
+desc = "Remove all Defender exclusions"
+run = '''
+$p = Get-MpPreference
+$p.ExclusionPath      | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionPath $_ }
+$p.ExclusionExtension | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionExtension $_ }
+$p.ExclusionProcess   | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionProcess $_ }
+$p.ExclusionIpAddress | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionIpAddress $_ }
+'''
+check = "& { $p = Get-MpPreference; -not ($p.ExclusionPath -or $p.ExclusionExtension -or $p.ExclusionProcess -or $p.ExclusionIpAddress) }"
+
+# --- Services ---
+
+[[cmd]]
+desc = "Start Windows Update service"
+run = 'Start-Service wuauserv'
+check = "(Get-Service wuauserv).Status -eq 'Running'"
+
+[[cmd]]
+desc = "Start Security Center service (Action Center)"
+run = 'Start-Service wscsvc'
+check = "(Get-Service wscsvc).Status -eq 'Running'"
+
+# Checklist: disable Telnet, FTP, web (IIS), SMTP, DNS server.
+# Remove a name if the README lists it as a required service.
+[[cmd]]
+desc = "Stop and disable Telnet, FTP, IIS, SMTP, DNS server"
+run = '''
+Get-Service TlntSvr, FTPSVC, W3SVC, SMTPSVC, DNS -ErrorAction SilentlyContinue | ForEach-Object {
+    Stop-Service $_.Name -Force
+    Set-Service $_.Name -StartupType Disabled
+}
+'''
+check = "-not (Get-Service TlntSvr, FTPSVC, W3SVC, SMTPSVC, DNS -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Stopped' -or $_.StartType -ne 'Disabled' })"
+
+# --- SMB (checklist: do LAST, only if README doesn't need SMB1) ---
+
+[[cmd]]
+desc = "Remove SMBv1 feature (needs reboot to finish)"
+run = 'Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart'
+check = "(Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol).State -ne 'Enabled'"
+
+# --- Last: apply the policy registry values above now instead of at reboot ---
+
+[[cmd]]
+desc = "Apply group policy (gpupdate /force)"
+run = 'gpupdate /force'
