@@ -1,13 +1,12 @@
-//! app updates through winget. CP images often ship without it, so install it first
 use crate::{ctx::Ctx, sys};
 
-// Microsoft.WinGet.Client returns objects; winget.exe only prints a table with progress bars in it
+// objects, not winget's table
 const MODULE: &str = "Import-Module Microsoft.WinGet.Client";
 
 pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
     if !sys::check("(Get-Module -ListAvailable Microsoft.WinGet.Client) -and (Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller)")? {
         ctx.info("winget missing: installing it (App Installer + Microsoft.WinGet.Client)");
-        // PSGallery needs TLS 1.2 on Windows PowerShell 5.1
+        // psgallery needs tls 1.2
         sys::run(
             ctx,
             "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -53,7 +52,7 @@ struct Pkg {
     to: String,
 }
 
-// "Id|Name|Installed|Available" per line. ids go into powershell quotes, so only plain ones
+// ids land in ps quotes
 fn parse(s: &str) -> Vec<Pkg> {
     s.lines()
         .filter_map(|l| {
@@ -66,12 +65,5 @@ fn parse(s: &str) -> Vec<Pkg> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn parse_skips_junk_and_unsafe_ids() {
-        let p = super::parse("Google.Chrome|Google Chrome|155.0|156.1\n\nNotepad++.Notepad++|Notepad++|8.6|8.7\nbad'id|x|1|2\nonly|two\n");
-        let ids: Vec<_> = p.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["Google.Chrome", "Notepad++.Notepad++"]);
-        assert_eq!((p[0].from.as_str(), p[0].to.as_str()), ("155.0", "156.1"));
-    }
-}
+#[path = "../../tests/unit/updates.rs"]
+mod tests;

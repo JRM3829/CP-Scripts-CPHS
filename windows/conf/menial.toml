@@ -1,0 +1,989 @@
+
+# template
+#   [[reg]]
+#   desc = "..."
+#   hive = "HKLM"              # HKLM or HKCU
+#   key  = 'SOFTWARE\...'      # literal, no escaping
+#   name = "ValueName"
+#   data = 1                   # int dword, string sz
+
+# --- windows update ---
+
+[[reg]]
+desc = "Windows Update service: automatic start"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\wuauserv'
+name = "Start"
+data = 2
+
+[[reg]]
+desc = "Automatic updates: enabled"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+name = "NoAutoUpdate"
+data = 0
+
+[[reg]]
+desc = "Automatic updates: auto download, notify to install"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+name = "AUOptions"
+data = 3
+
+# --- group policy ---
+
+[[reg]]
+desc = "Disable autoplay on all drives"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+name = "NoDriveTypeAutoRun"
+data = 255
+
+[[reg]]
+desc = "Disable autorun"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'
+name = "NoAutorun"
+data = 1
+
+[[reg]]
+desc = "SmartScreen for Explorer: enabled"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "EnableSmartScreen"
+data = 1
+
+[[reg]]
+desc = "SmartScreen for Explorer: warn"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "ShellSmartScreenLevel"
+data = "Warn"
+
+[[reg]]
+desc = "Remote Desktop: require SSL security layer"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "SecurityLayer"
+data = 2
+
+# --- firewall ---
+
+[[reg]]
+desc = "Firewall on: domain profile (local setting)"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: private profile (local setting)"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: public profile (local setting)"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: domain profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\DomainProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: private profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PrivateProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall on: public profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile'
+name = "EnableFirewall"
+data = 1
+
+# --- action center ---
+
+
+[[reg]]
+desc = "Security Center service: automatic start"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\wscsvc'
+name = "Start"
+data = 2
+
+[[reg]]
+desc = "Notification/Action Center not disabled by policy"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Explorer'
+name = "DisableNotificationCenter"
+data = 0
+
+# --- remote assistance / desktop ---
+
+[[reg]]
+desc = "Disable Remote Assistance"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Remote Assistance'
+name = "fAllowToGetHelp"
+data = 0
+
+[[reg]]
+desc = "Remote Desktop: require Network Level Authentication"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+name = "UserAuthentication"
+data = 1
+
+# --- security options ---
+
+[[reg]]
+desc = "Blank passwords allowed only at console"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "LimitBlankPasswordUse"
+data = 1
+
+[[reg]]
+desc = "Don't display user info when locked"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DontDisplayLockedUserId"
+data = 3
+
+[[reg]]
+desc = "Don't display last signed-in user"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DontDisplayLastUserName"
+data = 1
+
+[[reg]]
+desc = "Require Ctrl+Alt+Del to sign in"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DisableCAD"
+data = 0
+
+[[reg]]
+desc = "Enable UAC"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "EnableLUA"
+data = 1
+
+[[reg]]
+desc = "UAC: prompt admins on secure desktop"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "ConsentPromptBehaviorAdmin"
+data = 2
+
+[[reg]]
+desc = "Restrict anonymous enumeration of shares"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "RestrictAnonymous"
+data = 1
+
+[[reg]]
+desc = "Restrict anonymous enumeration of SAM accounts"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "RestrictAnonymousSAM"
+data = 1
+
+[[reg]]
+desc = "Everyone permissions don't apply to anonymous users"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "EveryoneIncludesAnonymous"
+data = 0
+
+[[reg]]
+desc = "Network logons use classic model, not Guest only"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "ForceGuest"
+data = 0
+
+[[reg]]
+desc = "Block insecure guest logons to SMB shares (policy)"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\LanmanWorkstation'
+name = "AllowInsecureGuestAuth"
+data = 0
+
+[[reg]]
+desc = "Block insecure guest logons to SMB shares"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters'
+name = "AllowInsecureGuestAuth"
+data = 0
+
+[[reg]]
+desc = "Don't store LM hashes"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "NoLMHash"
+data = 1
+
+[[reg]]
+desc = "NTLMv2 only"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "LmCompatibilityLevel"
+data = 5
+
+[[reg]]
+desc = "Disable WDigest plaintext credentials"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest'
+name = "UseLogonCredential"
+data = 0
+
+[[reg]]
+desc = "Disable automatic admin logon"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+name = "AutoAdminLogon"
+data = "0"
+
+[[reg]]
+desc = "Block Microsoft accounts: can't add or log on with them"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "NoConnectedUser"
+data = 3
+
+[[reg]]
+desc = "Machine inactivity limit: 900 seconds"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "InactivityTimeoutSecs"
+data = 900
+
+[[reg]]
+desc = "Logon warning banner: title"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "LegalNoticeCaption"
+data = "Authorized Use Only"
+
+[[reg]]
+desc = "Logon warning banner: text"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "LegalNoticeText"
+data = "This system is for authorized users only. Activity may be monitored and reported."
+
+[[reg]]
+desc = "Shutdown without logon: disabled"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "ShutdownWithoutLogon"
+data = 0
+
+[[reg]]
+desc = "UAC: Admin Approval Mode for built-in Administrator"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "FilterAdministratorToken"
+data = 1
+
+[[reg]]
+desc = "UAC: standard users auto-denied elevation"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "ConsentPromptBehaviorUser"
+data = 0
+
+[[reg]]
+desc = "UAC: switch to secure desktop when prompting"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "PromptOnSecureDesktop"
+data = 1
+
+[[reg]]
+desc = "UAC: detect application installations"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "EnableInstallerDetection"
+data = 1
+
+[[reg]]
+desc = "UAC: only elevate UIAccess apps in secure locations"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "EnableSecureUIAPaths"
+data = 1
+
+[[reg]]
+desc = "UAC: virtualize file and registry write failures"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "EnableVirtualization"
+data = 1
+
+[[reg]]
+desc = "Restrict anonymous access to named pipes and shares"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanManServer\Parameters'
+name = "RestrictNullSessAccess"
+data = 1
+
+[[reg]]
+desc = "Don't store passwords/credentials for network authentication"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Lsa'
+name = "DisableDomainCreds"
+data = 1
+
+[[reg]]
+desc = "SMB client: always digitally sign"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters'
+name = "RequireSecuritySignature"
+data = 1
+
+[[reg]]
+desc = "SMB client: sign if server agrees"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters'
+name = "EnableSecuritySignature"
+data = 1
+
+[[reg]]
+desc = "SMB client: no unencrypted passwords to third-party servers"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters'
+name = "EnablePlainTextPassword"
+data = 0
+
+[[reg]]
+desc = "SMB server: always digitally sign"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanManServer\Parameters'
+name = "RequireSecuritySignature"
+data = 1
+
+[[reg]]
+desc = "SMB server: sign if client agrees"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Services\LanManServer\Parameters'
+name = "EnableSecuritySignature"
+data = 1
+
+[[reg]]
+desc = "Prevent users from installing printer drivers"
+hive = "HKLM"
+key = 'SYSTEM\CurrentControlSet\Control\Print\Providers\LanMan Print Services\Servers'
+name = "AddPrinterDrivers"
+data = 1
+
+[[reg]]
+desc = "Recovery console: no automatic admin logon"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Setup\RecoveryConsole'
+name = "SecurityLevel"
+data = 0
+
+# --- administrative templates ---
+
+[[reg]]
+desc = "Windows Update: don't remove access to Windows Update features"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+name = "SetDisableUXWUAccess"
+data = 0
+
+[[reg]]
+desc = "Disallow autoplay for non-volume devices"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Explorer'
+name = "NoAutoplayfornonVolume"
+data = 1
+
+[[reg]]
+desc = "Defender: not turned off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows Defender'
+name = "DisableAntiSpyware"
+data = 0
+
+[[reg]]
+desc = "Defender: real-time protection not turned off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection'
+name = "DisableRealtimeMonitoring"
+data = 0
+
+[[reg]]
+desc = "Defender: behavior monitoring on"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection'
+name = "DisableBehaviorMonitoring"
+data = 0
+
+[[reg]]
+desc = "Defender: scan downloaded files and attachments"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection'
+name = "DisableIOAVProtection"
+data = 0
+
+[[reg]]
+desc = "Defender: block potentially unwanted apps"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows Defender'
+name = "PUAProtection"
+data = 1
+
+[[reg]]
+desc = "Defender: Advanced MAPS"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows Defender\Spynet'
+name = "SpynetReporting"
+data = 2
+
+[[reg]]
+desc = "Firewall policy: protect all connections, standard profile (Network Connections template)"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\StandardProfile'
+name = "EnableFirewall"
+data = 1
+
+[[reg]]
+desc = "Firewall policy: block inbound by default, domain profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\DomainProfile'
+name = "DefaultInboundAction"
+data = 1
+
+[[reg]]
+desc = "Firewall policy: block inbound by default, private profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PrivateProfile'
+name = "DefaultInboundAction"
+data = 1
+
+[[reg]]
+desc = "Firewall policy: block inbound by default, public profile"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\WindowsFirewall\PublicProfile'
+name = "DefaultInboundAction"
+data = 1
+
+[[reg]]
+desc = "Remote Desktop policy: require Network Level Authentication"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "UserAuthentication"
+data = 1
+
+[[reg]]
+desc = "Remote Desktop: high encryption level"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "MinEncryptionLevel"
+data = 3
+
+[[reg]]
+desc = "Remote Desktop: always prompt for password"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "fPromptForPassword"
+data = 1
+
+[[reg]]
+desc = "Remote Desktop: no drive redirection"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "fDisableCdm"
+data = 1
+
+[[reg]]
+desc = "Remote Desktop client: don't save passwords"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "DisablePasswordSaving"
+data = 1
+
+[[reg]]
+desc = "Remote Assistance policy: solicited off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "fAllowToGetHelp"
+data = 0
+
+[[reg]]
+desc = "Remote Assistance policy: offer (unsolicited) off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+name = "fAllowUnsolicited"
+data = 0
+
+[[reg]]
+desc = "Windows Installer: never install elevated (computer)"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Installer'
+name = "AlwaysInstallElevated"
+data = 0
+
+[[reg]]
+desc = "Windows Installer: never install elevated (current user)"
+hive = "HKCU"
+key = 'Software\Policies\Microsoft\Windows\Installer'
+name = "AlwaysInstallElevated"
+data = 0
+
+[[reg]]
+desc = "WinRM client: no Basic auth"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WinRM\Client'
+name = "AllowBasic"
+data = 0
+
+[[reg]]
+desc = "WinRM client: no unencrypted traffic"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WinRM\Client'
+name = "AllowUnencryptedTraffic"
+data = 0
+
+[[reg]]
+desc = "WinRM service: no Basic auth"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WinRM\Service'
+name = "AllowBasic"
+data = 0
+
+[[reg]]
+desc = "WinRM service: no unencrypted traffic"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WinRM\Service'
+name = "AllowUnencryptedTraffic"
+data = 0
+
+[[reg]]
+desc = "WinRM service: don't store RunAs credentials"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\WinRM\Service'
+name = "DisableRunAs"
+data = 1
+
+[[reg]]
+desc = "Logon: hide network selection UI"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "DontDisplayNetworkSelectionUI"
+data = 1
+
+[[reg]]
+desc = "Logon: don't enumerate local users on domain-joined computers"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "EnumerateLocalUsers"
+data = 0
+
+[[reg]]
+desc = "Logon: convenience PIN off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "AllowDomainPINLogon"
+data = 0
+
+[[reg]]
+desc = "Logon: picture password off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\System'
+name = "BlockDomainPicturePassword"
+data = 1
+
+[[reg]]
+desc = "Credential UI: no password reveal button"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\CredUI'
+name = "DisablePasswordReveal"
+data = 1
+
+[[reg]]
+desc = "Credential UI: don't enumerate admins on elevation"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\CredUI'
+name = "EnumerateAdministrators"
+data = 0
+
+[[reg]]
+desc = "Don't sign in and lock last user after restart"
+hive = "HKLM"
+key = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+name = "DisableAutomaticRestartSignOn"
+data = 1
+
+[[reg]]
+desc = "Password on wake: on battery"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Power\PowerSettings\0e796bdb-100d-47d6-a2d5-f7d2daa51f51'
+name = "DCSettingIndex"
+data = 1
+
+[[reg]]
+desc = "Password on wake: plugged in"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Power\PowerSettings\0e796bdb-100d-47d6-a2d5-f7d2daa51f51'
+name = "ACSettingIndex"
+data = 1
+
+[[reg]]
+desc = "Turn off multicast name resolution (LLMNR)"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'
+name = "EnableMulticast"
+data = 0
+
+[[reg]]
+desc = "Prohibit Network Bridge on domain network"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Network Connections'
+name = "NC_AllowNetBridge_NLA"
+data = 0
+
+[[reg]]
+desc = "Prohibit Internet Connection Sharing on domain network"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Network Connections'
+name = "NC_ShowSharedAccessUI"
+data = 0
+
+[[reg]]
+desc = "PowerShell script block logging"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'
+name = "EnableScriptBlockLogging"
+data = 1
+
+[[reg]]
+desc = "PowerShell module logging"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging'
+name = "EnableModuleLogging"
+data = 1
+
+[[reg]]
+desc = "PowerShell module logging: all modules"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\PowerShell\ModuleLogging\ModuleNames'
+name = "*"
+data = "*"
+
+[[reg]]
+desc = "Security log max size 196608 KB"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\EventLog\Security'
+name = "MaxSize"
+data = 196608
+
+[[reg]]
+desc = "Application log max size 32768 KB"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\EventLog\Application'
+name = "MaxSize"
+data = 32768
+
+[[reg]]
+desc = "System log max size 32768 KB"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\EventLog\System'
+name = "MaxSize"
+data = 32768
+
+[[reg]]
+desc = "Explorer: DEP not turned off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Explorer'
+name = "NoDataExecutionPrevention"
+data = 0
+
+[[reg]]
+desc = "Explorer: heap termination on corruption not turned off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Explorer'
+name = "NoHeapTerminationOnCorruption"
+data = 0
+
+[[reg]]
+desc = "Lock screen camera off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Personalization'
+name = "NoLockScreenCamera"
+data = 1
+
+[[reg]]
+desc = "Lock screen slide show off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Personalization'
+name = "NoLockScreenSlideshow"
+data = 1
+
+[[reg]]
+desc = "Cortana off"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Windows Search'
+name = "AllowCortana"
+data = 0
+
+[[reg]]
+desc = "Don't index encrypted files"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\Windows Search'
+name = "AllowIndexingEncryptedStoresOrItems"
+data = 0
+
+[[reg]]
+desc = "Diagnostic data: lowest level"
+hive = "HKLM"
+key = 'SOFTWARE\Policies\Microsoft\Windows\DataCollection'
+name = "AllowTelemetry"
+data = 0
+
+# template
+#   [[cmd]]
+#   desc  = "..."
+#   run   = '...'    # ''' for multi-line
+#   check = '...'    # optional, true = done
+
+[[cmd]]
+desc = "Password policy: min length 12, max age 30, min age 10, history 5"
+run = 'net accounts /minpwlen:12 /maxpwage:30 /minpwage:10 /uniquepw:5'
+
+[[cmd]]
+desc = "Lockout policy: 5 attempts, 30 min duration, 30 min reset"
+run = 'net accounts /lockoutthreshold:5 /lockoutduration:30 /lockoutwindow:30'
+
+[[cmd]]
+desc = "Security template: password complexity, no reversible encryption, anonymous SID lookup off, user rights"
+run = '''
+$inf = "$env:TEMP\wyn-sec.inf"; $db = "$env:TEMP\wyn-sec.sdb"
+@'
+[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[System Access]
+PasswordComplexity = 1
+ClearTextPassword = 0
+LSAAnonymousNameLookup = 0
+[Privilege Rights]
+SeNetworkLogonRight = *S-1-5-32-544,*S-1-5-11
+SeRemoteInteractiveLogonRight = *S-1-5-32-544
+SeDenyNetworkLogonRight = *S-1-5-32-546
+SeDenyInteractiveLogonRight = *S-1-5-32-546
+SeDenyRemoteInteractiveLogonRight = *S-1-5-32-546
+SeTcbPrivilege =
+SeCreateTokenPrivilege =
+SeDebugPrivilege = *S-1-5-32-544
+SeTakeOwnershipPrivilege = *S-1-5-32-544
+SeLoadDriverPrivilege = *S-1-5-32-544
+SeBackupPrivilege = *S-1-5-32-544
+SeRestorePrivilege = *S-1-5-32-544
+SeSystemtimePrivilege = *S-1-5-32-544,*S-1-5-19
+SeRemoteShutdownPrivilege = *S-1-5-32-544
+SeImpersonatePrivilege = *S-1-5-32-544,*S-1-5-19,*S-1-5-20,*S-1-5-6
+'@ | Set-Content $inf -Encoding Unicode
+Remove-Item $db -ErrorAction SilentlyContinue
+secedit /configure /db $db /cfg $inf /quiet
+'''
+
+# missing on older win10
+[[cmd]]
+desc = "Allow Administrator account lockout"
+run = '''
+$inf = "$env:TEMP\wyn-sec-adm.inf"; $db = "$env:TEMP\wyn-sec-adm.sdb"
+@'
+[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[System Access]
+AllowAdministratorLockout = 1
+'@ | Set-Content $inf -Encoding Unicode
+Remove-Item $db -ErrorAction SilentlyContinue
+secedit /configure /db $db /cfg $inf /quiet
+'''
+
+# --- audit policy ---
+
+[[cmd]]
+desc = "Audit success and failure for all categories"
+run = 'auditpol /set /category:* /success:enable /failure:enable'
+
+# --- accounts ---
+
+[[cmd]]
+desc = "Disable built-in Guest (found by SID, so renamed accounts count)"
+run = "Get-LocalUser | Where-Object { $_.SID -like '*-501' } | Disable-LocalUser"
+check = "-not (Get-LocalUser | Where-Object { $_.SID -like '*-501' -and $_.Enabled })"
+
+[[cmd]]
+desc = "Rename built-in Administrator and Guest away from the default names"
+run = '''
+Get-LocalUser | Where-Object { $_.SID -like '*-500' -and $_.Name -eq 'Administrator' } | Rename-LocalUser -NewName 'LocalAdm'
+Get-LocalUser | Where-Object { $_.SID -like '*-501' -and $_.Name -eq 'Guest' } | Rename-LocalUser -NewName 'LocalVisitor'
+'''
+check = "-not (Get-LocalUser | Where-Object { ($_.SID -like '*-500' -and $_.Name -eq 'Administrator') -or ($_.SID -like '*-501' -and $_.Name -eq 'Guest') })"
+
+# orphaned sids throw
+[[cmd]]
+desc = "Disable built-in Administrator (only if another enabled admin exists)"
+run = '''
+$g = [ADSI]("WinNT://$env:COMPUTERNAME/" + (Get-LocalGroup -SID 'S-1-5-32-544').Name + ',group')
+$names = $g.Invoke('Members') | ForEach-Object { $_.GetType().InvokeMember('Name', 'GetProperty', $null, $_, $null) }
+if (Get-LocalUser | Where-Object { $_.Enabled -and $_.SID -notlike '*-500' -and $names -contains $_.Name }) {
+    Get-LocalUser | Where-Object { $_.SID -like '*-500' } | Disable-LocalUser
+} else { Write-Error 'no other enabled admin: built-in Administrator left enabled' }
+'''
+check = "-not (Get-LocalUser | Where-Object { $_.SID -like '*-500' -and $_.Enabled })"
+
+# --- defender & firewall ---
+
+[[cmd]]
+desc = "Firewall on for all profiles (takes effect now)"
+run = 'netsh advfirewall set allprofiles state on'
+check = "-not (Get-NetFirewallProfile -PolicyStore ActiveStore | Where-Object { -not $_.Enabled })"
+
+[[cmd]]
+desc = "Firewall: block inbound, allow outbound by default (takes effect now)"
+run = 'netsh advfirewall set allprofiles firewallpolicy blockinbound,allowoutbound'
+check = "-not (Get-NetFirewallProfile -PolicyStore ActiveStore | Where-Object { $_.DefaultInboundAction -ne 'Block' })"
+
+[[cmd]]
+desc = "Defender: real-time, behavior monitoring, download scanning, PUA block, Advanced MAPS (takes effect now)"
+run = 'Set-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false -DisableIOAVProtection $false -PUAProtection Enabled -MAPSReporting Advanced'
+check = "& { $p = Get-MpPreference; -not ($p.DisableRealtimeMonitoring -or $p.DisableBehaviorMonitoring -or $p.DisableIOAVProtection) -and $p.PUAProtection -eq 1 -and $p.MAPSReporting -eq 2 }"
+
+# misses policy exclusions
+[[cmd]]
+desc = "Remove Defender exclusions set by policy"
+run = '''Remove-Item 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions' -Recurse -Force'''
+check = '''-not (Test-Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions')'''
+
+[[cmd]]
+desc = "Remove all Defender exclusions"
+run = '''
+$p = Get-MpPreference
+$p.ExclusionPath      | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionPath $_ }
+$p.ExclusionExtension | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionExtension $_ }
+$p.ExclusionProcess   | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionProcess $_ }
+$p.ExclusionIpAddress | Where-Object { $_ } | ForEach-Object { Remove-MpPreference -ExclusionIpAddress $_ }
+'''
+check = "& { $p = Get-MpPreference; -not ($p.ExclusionPath -or $p.ExclusionExtension -or $p.ExclusionProcess -or $p.ExclusionIpAddress) }"
+
+[[cmd]]
+desc = "Windows Installer: never install elevated (all signed-in users)"
+run = '''
+Get-ChildItem Registry::HKEY_USERS | ForEach-Object {
+    $k = "Registry::$($_.Name)\Software\Policies\Microsoft\Windows\Installer"
+    if ((Get-ItemProperty $k -ErrorAction SilentlyContinue).AlwaysInstallElevated) { Set-ItemProperty $k AlwaysInstallElevated 0 }
+}
+'''
+check = '''-not (Get-ChildItem Registry::HKEY_USERS | Where-Object { (Get-ItemProperty "Registry::$($_.Name)\Software\Policies\Microsoft\Windows\Installer" -ErrorAction SilentlyContinue).AlwaysInstallElevated })'''
+
+# --- services ---
+
+[[cmd]]
+desc = "Start Windows Update service"
+run = 'Start-Service wuauserv'
+check = "(Get-Service wuauserv).Status -eq 'Running'"
+
+[[cmd]]
+desc = "Start Security Center service (Action Center)"
+run = 'Start-Service wscsvc'
+check = "(Get-Service wscsvc).Status -eq 'Running'"
+
+[[cmd]]
+desc = "Apply group policy (gpupdate /force)"
+run = 'gpupdate /force'
+
+# template, readme-dependent, asked last
+#   [[ask]]
+#   question = "..."
+#   check = '...'    # optional, true = skip
+#   yes   = '...'    # optional
+#   no    = '...'    # optional
+
+[[ask]]
+question = "Does the README list Telnet as a critical service?"
+check = "-not (Get-Service TlntSvr -ErrorAction SilentlyContinue)"
+yes = 'Set-Service TlntSvr -StartupType Automatic; Start-Service TlntSvr'
+no = 'Stop-Service TlntSvr -Force; Set-Service TlntSvr -StartupType Disabled'
+
+[[ask]]
+question = "Does the README list FTP as a critical service?"
+check = "-not (Get-Service FTPSVC -ErrorAction SilentlyContinue)"
+yes = 'Set-Service FTPSVC -StartupType Automatic; Start-Service FTPSVC'
+no = 'Stop-Service FTPSVC -Force; Set-Service FTPSVC -StartupType Disabled'
+
+[[ask]]
+question = "Does the README list IIS (web server) as a critical service?"
+check = "-not (Get-Service W3SVC -ErrorAction SilentlyContinue)"
+yes = 'Set-Service W3SVC -StartupType Automatic; Start-Service W3SVC'
+no = 'Stop-Service W3SVC -Force; Set-Service W3SVC -StartupType Disabled'
+
+[[ask]]
+question = "Does the README list SMTP (mail server) as a critical service?"
+check = "-not (Get-Service SMTPSVC -ErrorAction SilentlyContinue)"
+yes = 'Set-Service SMTPSVC -StartupType Automatic; Start-Service SMTPSVC'
+no = 'Stop-Service SMTPSVC -Force; Set-Service SMTPSVC -StartupType Disabled'
+
+[[ask]]
+question = "Does the README list DNS server as a critical service?"
+check = "-not (Get-Service DNS -ErrorAction SilentlyContinue)"
+yes = 'Set-Service DNS -StartupType Automatic; Start-Service DNS'
+no = 'Stop-Service DNS -Force; Set-Service DNS -StartupType Disabled'
+
+[[ask]]
+question = "Does the README require SMB1 (SMBv1 file sharing)?"
+check = '''(Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol).State -ne 'Enabled' -and (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters').SMB1 -eq 0'''
+no = '''
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' SMB1 0 -Type DWord
+Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart | Out-Null
+'''
+
+# rdp rule group, any language
+[[ask]]
+question = "Does the README list Remote Desktop (RDP) as a critical service?"
+yes = '''
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' fDenyTSConnections 0 -Type DWord
+reg add 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' /v fDenyTSConnections /t REG_DWORD /d 0 /f | Out-Null
+Enable-NetFirewallRule -Group '@FirewallAPI.dll,-28752'
+$inf = "$env:TEMP\wyn-rdp.inf"; $db = "$env:TEMP\wyn-rdp.sdb"
+@'
+[Unicode]
+Unicode=yes
+[Version]
+signature="$CHICAGO$"
+Revision=1
+[Privilege Rights]
+SeRemoteInteractiveLogonRight = *S-1-5-32-544,*S-1-5-32-555
+'@ | Set-Content $inf -Encoding Unicode
+Remove-Item $db -ErrorAction SilentlyContinue
+secedit /configure /db $db /cfg $inf /quiet
+'''
+no = '''
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' fDenyTSConnections 1 -Type DWord
+reg add 'HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' /v fDenyTSConnections /t REG_DWORD /d 1 /f | Out-Null
+Disable-NetFirewallRule -Group '@FirewallAPI.dll,-28752'
+'''

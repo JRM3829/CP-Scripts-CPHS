@@ -1,4 +1,3 @@
-//! cli -> Ctx -> module. no args on windows -> gui
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod ctx;
 #[cfg(windows)]

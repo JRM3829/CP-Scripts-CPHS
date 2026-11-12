@@ -2,16 +2,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// dry_run is enforced in sys.rs, not by modules
 pub struct Ctx {
     pub dry_run: bool,
     pub verbose: bool,
     pub conf_dir: PathBuf,
-    /// gui sets this; None prints to stdout
+    // none = stdout
     pub log: Option<Arc<Mutex<String>>>,
-    /// README url or file; None searches the Desktops
+    // none = search desktops
     pub readme: Option<String>,
-    /// long steps report here; gui shows it as a bar with a timer
     pub progress: Arc<Mutex<Option<Progress>>>,
 }
 
@@ -43,6 +41,38 @@ impl Ctx {
         match &self.log {
             Some(l) => *l.lock().unwrap() += &(line + "\n"),
             None => println!("{line}"),
+        }
+    }
+
+    pub fn ask(&self, q: &str) -> Option<bool> {
+        if self.dry_run {
+            self.info(format!("[dry-run] would ask: {q}"));
+            return None;
+        }
+        #[cfg(windows)]
+        if self.log.is_some() {
+            let a = crate::gui::ask(q);
+            self.info(format!("{q} -> {}", match a { Some(true) => "y", Some(false) => "n", None => "skipped" }));
+            return a;
+        }
+        // may lack stdin handle
+        #[cfg(windows)]
+        let input = std::fs::OpenOptions::new().read(true).write(true).open("CONIN$").ok()?;
+        #[cfg(not(windows))]
+        let input = std::io::stdin();
+        let mut input = std::io::BufReader::new(input);
+        loop {
+            print!("[?] {q} [y/n] ");
+            std::io::Write::flush(&mut std::io::stdout()).ok()?;
+            let mut line = String::new();
+            if std::io::BufRead::read_line(&mut input, &mut line).ok()? == 0 {
+                return None;
+            }
+            match line.trim().to_ascii_lowercase().as_str() {
+                "y" | "yes" => return Some(true),
+                "n" | "no" => return Some(false),
+                _ => {}
+            }
         }
     }
 

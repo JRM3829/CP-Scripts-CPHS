@@ -1,4 +1,3 @@
-//! only place that touches the system. every mutation checks dry_run here so modules can't skip it
 use crate::ctx::Ctx;
 use serde::Deserialize;
 use std::io;
@@ -9,7 +8,6 @@ pub enum Hive {
     HKCU,
 }
 
-/// toml int -> REG_DWORD, toml string -> REG_SZ
 #[derive(Deserialize, Clone, PartialEq, Debug)]
 #[serde(untagged)]
 pub enum Data {
@@ -46,7 +44,7 @@ mod imp {
         }
     }
 
-    /// None = missing, or a value type we don't manage
+    // none = missing or unmanaged
     pub fn reg_get(h: Hive, key: &str, name: &str) -> anyhow::Result<Option<Data>> {
         let Some(k) = found(root(h).open_subkey(key))? else { return Ok(None) };
         let Some(v) = found(k.get_raw_value(name))? else { return Ok(None) };
@@ -67,7 +65,7 @@ mod imp {
     }
 }
 
-// so it builds and tests on linux
+// linux builds and tests
 #[cfg(not(windows))]
 mod imp {
     use super::*;
@@ -91,20 +89,17 @@ pub fn reg_set(ctx: &Ctx, h: Hive, key: &str, name: &str, d: &Data) -> anyhow::R
     Ok(())
 }
 
-// -EncodedCommand so quotes survive as written.
-// progress silenced, otherwise it leaks into stderr as CLIXML
+// progress else clixml on stderr
 fn ps(script: &str) -> io::Result<std::process::Output> {
     let script = format!("$ProgressPreference = 'SilentlyContinue'\n[Console]::OutputEncoding = [Text.Encoding]::UTF8\n{script}");
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut c = std::process::Command::new("powershell");
-    // gui build has no console; without this every call flashes a window
     #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000); // CREATE_NO_WINDOW
+    std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000); // create_no_window
     c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &base64(&utf16)])
         .output()
 }
 
-/// any unhandled error -> plain text on stderr + exit 1. errors the script silences itself don't count
 fn guarded(script: &str) -> String {
     format!("$ErrorActionPreference = 'Stop'\ntry {{\n{script}\n}} catch {{ [Console]::Error.WriteLine($_); exit 1 }}")
 }
@@ -121,14 +116,14 @@ fn base64(b: &[u8]) -> String {
     s
 }
 
-/// read-only, so it runs in dry-run too
+// runs in dry run
 pub fn check(cond: &str) -> anyhow::Result<bool> {
-    // want a marker, not just exit 0. a stub powershell (wine) exits 0 for everything
+    // wine exits 0 always
     let out = ps(&format!("if ({cond}) {{ 'WYN-CHECK-TRUE' }}"))?.stdout;
     Ok(String::from_utf8_lossy(&out).contains("WYN-CHECK-TRUE"))
 }
 
-/// read-only, so it runs in dry-run too
+// runs in dry run
 pub fn query(script: &str) -> anyhow::Result<String> {
     let o = ps(&guarded(script))?;
     anyhow::ensure!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr).trim());
@@ -140,7 +135,7 @@ pub fn run(ctx: &Ctx, cmd: &str) -> anyhow::Result<()> {
         ctx.info(format!("[dry-run] would run: {cmd}"));
         return Ok(());
     }
-    // native tools (net, secedit...) only report failure through their exit code
+    // native tools: exit code only
     let o = ps(&format!("{}\nif ($LASTEXITCODE) {{ exit $LASTEXITCODE }}\nexit 0", guarded(cmd)))?;
     let out = String::from_utf8_lossy(&o.stdout);
     let err = String::from_utf8_lossy(&o.stderr);
@@ -154,11 +149,5 @@ pub fn run(ctx: &Ctx, cmd: &str) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn base64_padding() {
-        assert_eq!(super::base64(b"Man"), "TWFu");
-        assert_eq!(super::base64(b"Ma"), "TWE=");
-        assert_eq!(super::base64(b"M"), "TQ==");
-    }
-}
+#[path = "../tests/unit/sys.rs"]
+mod tests;

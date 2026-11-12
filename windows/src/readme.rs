@@ -1,10 +1,9 @@
-//! README parser (Lwyn: libs/readme.sh)
 use crate::{ctx::Ctx, sys};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default)]
 pub struct Readme {
-    /// the "(you)" account. never delete it or touch its password
+    // "(you)" account
     pub me: Option<String>,
     pub admins: Vec<String>,
     pub users: Vec<String>,
@@ -16,7 +15,6 @@ fn has_list(page: &str) -> bool {
     page.to_lowercase().contains(MARKER)
 }
 
-/// README shortcut (.lnk/.url) or saved page on any desktop under C:\Users, Public included
 pub fn load(ctx: &Ctx) -> anyhow::Result<Readme> {
     let (src, html) = match &ctx.readme {
         Some(t) => open(t)?,
@@ -34,7 +32,7 @@ fn find(ctx: &Ctx) -> anyhow::Result<(String, String)> {
                 continue;
             }
             let target = if name.ends_with(".lnk") {
-                // browser shortcuts put the url in Arguments
+                // url in arguments
                 let p = f.display().to_string().replace('\'', "''");
                 sys::query(&format!("$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{p}'); \"$($s.TargetPath) $($s.Arguments)\""))?
             } else if name.ends_with(".url") {
@@ -52,7 +50,6 @@ fn find(ctx: &Ctx) -> anyhow::Result<(String, String)> {
     anyhow::bail!(r"no README found on any Desktop (C:\Users\*\Desktop)")
 }
 
-/// shortcut target: a url anywhere in it, a .url file, or a local page
 fn open(target: &str) -> anyhow::Result<(String, String)> {
     if let Some(url) = urls(target).into_iter().next() {
         let html = fetch(&url)?;
@@ -67,7 +64,7 @@ fn open(target: &str) -> anyhow::Result<(String, String)> {
     if has_list(&page) {
         return Ok((path.to_string(), page));
     }
-    // C:\CyberPatriot\readme.html is just a redirect to the online README
+    // local stub just redirects
     for url in urls(&page).into_iter().take(5) {
         if let Ok(html) = fetch(&url) {
             if has_list(&html) {
@@ -113,7 +110,7 @@ fn fetch(url: &str) -> anyhow::Result<String> {
     sys::query(&format!("(Invoke-WebRequest -UseBasicParsing -Uri '{url}').Content"))
 }
 
-// also keeps names safe inside powershell quotes
+// keeps ps quotes safe
 fn valid_name(s: &str) -> bool {
     !s.is_empty() && s.len() <= 20 && s.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c))
 }
@@ -123,7 +120,7 @@ pub fn parse(html: &str) -> Readme {
     let mut admins_section: Option<bool> = None;
     for raw in to_text(html).lines() {
         let line = raw.trim().trim_start_matches(['-', '*', '•']).trim();
-        let lower = line.to_ascii_lowercase(); // ascii so byte offsets match line
+        let lower = line.to_ascii_lowercase(); // keeps byte offsets
         if lower.starts_with(MARKER) {
             admins_section = Some(true);
             continue;
@@ -162,9 +159,8 @@ pub fn parse(html: &str) -> Readme {
     r
 }
 
-/// the <pre> with the account lists if there is one, else the whole page. tags stripped
 fn to_text(html: &str) -> String {
-    let lower = html.to_ascii_lowercase(); // ascii so byte offsets match html
+    let lower = html.to_ascii_lowercase(); // keeps byte offsets
     let mut body = html.to_string();
     let mut from = 0;
     while let Some(i) = lower[from..].find("<pre").map(|i| i + from) {
@@ -194,7 +190,7 @@ fn to_text(html: &str) -> String {
     decode(&out)
 }
 
-// script text would otherwise read as page text
+// else read as text
 fn drop_blocks(s: &str, tag: &str) -> String {
     let (open, close) = (format!("<{tag}"), format!("</{tag}>"));
     let mut out = String::new();
@@ -232,7 +228,7 @@ fn decode(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        // unknown or unterminated entity stays as literal '&'
+        // bad entity stays literal
         match rest.find(';').filter(|&j| j < 10).and_then(|j| Some((entity(&rest[1..j])?, j))) {
             Some((c, j)) => {
                 out.push(c);
@@ -249,25 +245,5 @@ fn decode(s: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn redirect_links() {
-        let page = r#"<meta http-equiv="refresh" content="0; url=https://example.org/scenario/abc/"><script>window.location='https://example.org/scenario/abc/';</script>"#;
-        assert_eq!(urls(page), ["https://example.org/scenario/abc/"]);
-    }
-
-    #[test]
-    fn no_pre_block_stops_at_next_heading() {
-        let r = parse(
-            "<html><body><script>var authorized = 1;</script><p>Critical Services:</p><p>None</p>\
-             <h2>Authorized Administrators and Users</h2><p>Authorized Administrators:<br>alpha (you)<br>\
-             &nbsp; password: x&amp;y<br>beta</p><p>Authorized Users:</p><ul><li>gamma</li><li>Some prose here.</li></ul>\
-             <h2>Competition Guidelines</h2><p>Never</p></body></html>",
-        );
-        assert_eq!(r.me.as_deref(), Some("alpha"));
-        assert_eq!(r.admins, ["alpha", "beta"]);
-        assert_eq!(r.users, ["gamma"]);
-    }
-}
+#[path = "../tests/unit/readme.rs"]
+mod tests;

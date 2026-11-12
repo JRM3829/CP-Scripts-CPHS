@@ -1,4 +1,3 @@
-//! local accounts + Administrators group = whatever the README says
 use crate::{ctx::Ctx, readme, sys};
 use serde::Deserialize;
 
@@ -8,13 +7,13 @@ struct Conf {
     password: String,
 }
 
-// by SID in case the group got renamed
+// group may be renamed
 const ADMIN_GROUP: &str = "$g = [ADSI](\"WinNT://$env:COMPUTERNAME/\" + (Get-LocalGroup -SID 'S-1-5-32-544').Name + ',group')";
 
 pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
     let conf: Conf = ctx.load("users.toml")?;
     let auth = readme::load(ctx)?;
-    // bad parse = empty list = delete everyone
+    // bad parse deletes everyone
     let Some(me) = auth.me.clone() else { anyhow::bail!("README has no \"(you)\" account; not touching users") };
     anyhow::ensure!(!auth.admins.is_empty(), "README has no authorized administrators; not touching users");
     ctx.info(format!("you: {me}"));
@@ -26,7 +25,7 @@ pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
     let current = std::env::var("USERNAME").unwrap_or_default();
     let protected = |n: &str| n.eq_ignore_ascii_case(&me) || n.eq_ignore_ascii_case(&current);
 
-    // (name, rid). rid < 1000 is built-in, menial handles those
+    // rid < 1000 built-in
     let local: Vec<(String, u32)> = sys::query("Get-LocalUser | ForEach-Object { '{0}|{1}' -f $_.Name, $_.SID.Value }")?
         .lines()
         .filter_map(|l| {
@@ -34,7 +33,7 @@ pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
             Some((name.to_string(), sid.rsplit('-').next()?.parse().ok()?))
         })
         .collect();
-    // ADSI, not Get-LocalGroupMember: that one throws on orphaned SIDs
+    // orphaned sids throw
     let in_admins: Vec<String> = sys::query(&format!(
         "{ADMIN_GROUP}\n$g.Invoke('Members') | ForEach-Object {{ $_.GetType().InvokeMember('Name', 'GetProperty', $null, $_, $null) }}"
     ))?
@@ -80,7 +79,7 @@ pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
         if !protected(n) {
             act(
                 format!("set password for {n}"),
-                // net user, not Set-LocalUser -Password: that throws InvalidPasswordException on some image accounts where net user works
+                // set-localuser throws sometimes
                 format!("net user '{n}' '{plain}' | Out-Null\nSet-LocalUser -Name '{n}' -PasswordNeverExpires $false\nnet user '{n}' /passwordreq:yes | Out-Null"),
             );
         }
@@ -90,11 +89,5 @@ pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn shipped_conf_parses() {
-        let s = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/conf/users.toml")).unwrap();
-        let c: super::Conf = toml::from_str(&s).unwrap();
-        assert!(c.password.len() >= 10);
-    }
-}
+#[path = "../../tests/unit/users.rs"]
+mod tests;

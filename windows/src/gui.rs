@@ -1,4 +1,3 @@
-//! elevate via UAC, then one window: pick module, Run, see output
 use crate::{
     ctx::{Ctx, Progress},
     modules,
@@ -25,20 +24,29 @@ fn w(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
 }
 
-/// gui subsystem has no console; borrow the parent's so the cli still prints
+// borrow parent console
 pub fn attach_console() {
-    unsafe { AttachConsole(u32::MAX) }; // ATTACH_PARENT_PROCESS
+    unsafe { AttachConsole(u32::MAX) }; // attach_parent_process
+}
+
+pub fn ask(q: &str) -> Option<bool> {
+    // yesno | question | foreground | topmost
+    match unsafe { MessageBoxW(0, w(q).as_ptr(), w("wyn: check the README").as_ptr(), 0x4 | 0x20 | 0x1_0000 | 0x4_0000) } {
+        6 => Some(true),
+        7 => Some(false),
+        _ => None,
+    }
 }
 
 pub fn main() -> anyhow::Result<()> {
     if unsafe { IsUserAnAdmin() } == 0 {
-        // runas starts in System32; pass our cwd so ./conf is still found
+        // runas starts in system32
         let (exe, dir) = (std::env::current_exe()?, std::env::current_dir()?);
         let r = unsafe {
             ShellExecuteW(0, w("runas").as_ptr(), w(&exe.to_string_lossy()).as_ptr(), std::ptr::null(), w(&dir.to_string_lossy()).as_ptr(), 1)
         };
         if r <= 32 {
-            unsafe { MessageBoxW(0, w("UAC is required").as_ptr(), w("wyn").as_ptr(), 0x10) }; // MB_ICONERROR
+            unsafe { MessageBoxW(0, w("UAC is required").as_ptr(), w("wyn").as_ptr(), 0x10) }; // iconerror
         }
         return Ok(());
     }
@@ -54,7 +62,7 @@ struct App {
     module: usize,
     dry_run: bool,
     readme: String,
-    /// one log per module, same order as modules::ALL
+    // indexed like modules::ALL
     out: Vec<Arc<Mutex<String>>>,
     running: usize,
     progress: Arc<Mutex<Option<Progress>>>,
@@ -113,7 +121,7 @@ impl eframe::App for App {
                 ui.checkbox(&mut self.dry_run, "Dry run");
             });
             if let (true, true, Some(p)) = (busy, self.module == self.running, &*self.progress.lock().unwrap()) {
-                // timer climbing on one item = stuck
+                // climbing timer = stuck
                 let text = format!("{}/{}  {}  {}s", p.done + 1, p.total, p.item, p.since.elapsed().as_secs());
                 ui.add(egui::ProgressBar::new(p.done as f32 / p.total as f32).text(text));
             }

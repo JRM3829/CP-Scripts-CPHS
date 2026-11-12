@@ -1,4 +1,3 @@
-//! generic hardening from conf/menial.toml (Lwyn: modules/menial)
 use crate::{
     ctx::Ctx,
     sys::{self, Data, Hive},
@@ -11,6 +10,18 @@ struct Conf {
     reg: Vec<Reg>,
     #[serde(default)]
     cmd: Vec<Cmd>,
+    #[serde(default)]
+    ask: Vec<Ask>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Ask {
+    question: String,
+    // true = don't ask
+    check: Option<String>,
+    yes: Option<String>,
+    no: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -28,7 +39,7 @@ struct Reg {
 struct Cmd {
     desc: String,
     run: String,
-    /// powershell condition, true = already done
+    // true = already done
     check: Option<String>,
 }
 
@@ -79,16 +90,17 @@ pub fn run(ctx: &Ctx) -> anyhow::Result<()> {
         });
         t.add(ctx, &c.desc, res);
     }
+    for a in &conf.ask {
+        let res = a.check.as_deref().map_or(Ok(false), sys::check).and_then(|skip| {
+            let cmd = if skip { None } else { ctx.ask(&a.question).and_then(|y| if y { a.yes.as_ref() } else { a.no.as_ref() }) };
+            cmd.map_or(Ok(false), |c| sys::run(ctx, c).map(|_| true))
+        });
+        t.add(ctx, &a.question, res);
+    }
     ctx.info(format!("menial: {} to fix, {} already ok, {} failed", t.fixed, t.ok, t.failed));
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn shipped_conf_parses() {
-        let s = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/conf/menial.toml")).unwrap();
-        let c: super::Conf = toml::from_str(&s).unwrap();
-        assert!(!c.reg.is_empty() && !c.cmd.is_empty());
-    }
-}
+#[path = "../../tests/unit/menial.rs"]
+mod tests;
