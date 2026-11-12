@@ -27,33 +27,24 @@ parse_entry() {
   nf=$(trim "$nf"); ns=$(trim "$ns"); nr=$(trim "$nr"); nc=$(trim "$nc")
 }
 
+# pending till check passes
 entry_is_pending() {
-  local f="$1" s="$2" r="$3" c="$4"
+  local f="$1" r="$3" c="$4"
   if [ "$f" = CMD ]; then
-    if [ -n "$c" ]; then
-      bash -c "$c" 2>/dev/null && return 1 || return 0
-    fi
-    return 0
+    [ -z "$c" ] || ! bash -c "$c" 2>/dev/null
+  else
+    [ ! -f "$f" ] || ! grep -Fxq "$r" "$f"
   fi
-  [ ! -f "$f" ] && return 0
-  grep -Fxq "$r" "$f" && return 1
-  return 0
 }
 
 apply_config_entry() {
-  local f="$1" s="$2" r="$3"
-  local safe
-  if [ ! -f "$f" ]; then
-    warn "WARN     skip $f (missing)"
-    return 0
-  fi
-  if [ "$DRY_RUN" = true ]; then
-    echo "DRY      $s"
-    return 0
-  fi
+  local f="$1" s="$2" r="$3" safe
+  [ -f "$f" ] || { warn "WARN     skip $f (missing)"; return 0; }
+  [ "$DRY_RUN" = true ] && { echo "DRY      $s"; return 0; }
   cp "$f" "${f}.bak.$(date +%Y%m%d%H%M%S)"
   safe=$(printf '%s' "$s" | sed 's/[.[^*$\\^|]/\\&/g')
-  if case "$s" in \**) true ;; *) false ;; esac; then
+  # leading * = anywhere
+  if [[ "$s" == \** ]]; then
     if grep -iq "$safe" "$f"; then
       sed -i "s|.*${safe}.*|${r}|" "$f"
     else
@@ -101,13 +92,11 @@ process_section() {
     fi
   done
   [ ${#pending[@]} -eq 0 ] && return 0
-  if [ "$DRY_RUN" = true ]; then
-    apply_entries "${pending[@]}"
-  elif [ "$PROMPT_MODE" = true ]; then
-    confirm "apply $name changes?" && apply_entries "${pending[@]}" || echo "WARN     skipped $name"
-  else
-    apply_entries "${pending[@]}"
+  if [ "$DRY_RUN" != true ] && [ "$PROMPT_MODE" = true ] && ! confirm "apply $name changes?"; then
+    echo "WARN     skipped $name"
+    return 0
   fi
+  apply_entries "${pending[@]}"
 }
 
 apply_conf() {
@@ -135,8 +124,7 @@ apply_conf() {
       continue
     fi
     entry=$(trim "$raw")
-    [ -z "$entry" ] && continue
-    case "$entry" in \#*) continue ;; esac
+    case "$entry" in ''|\#*) continue ;; esac
     [ -z "$prev" ] && prev=Menial
     sec_entries+=("$entry")
   done
@@ -144,6 +132,39 @@ apply_conf() {
   if [ "$DRY_RUN" != true ] && [ "$sysctl_applied" = true ]; then
     sysctl -p > /dev/null || warn "sysctl reload failed"
   fi
+}
+
+group_action() {
+  local g="$GROUP_ADD_GROUP" u done="" miss=""
+  local users
+  users=$(echo $GROUP_ADD_USERS)
+  [ "$DRY_RUN" = true ] && { echo "Would create group $g and add users ${users// /, }"; return; }
+  for u in $GROUP_ADD_USERS; do
+    if id -nG "$u" 2>/dev/null | grep -qw -- "$g"; then done+=" $u"; else miss+=" $u"; fi
+  done
+  getent group "$g" >/dev/null 2>&1 || { echo "Group $g not created - do manually"; return; }
+  done=$(echo $done); miss=$(echo $miss)
+  [ -n "$done" ] && printf 'Created group %s and added users %s' "$g" "${done// /, }" || printf 'Created group %s' "$g"
+  [ -n "$miss" ] && printf ' - add manually: %s' "${miss// /, }"
+  echo
+}
+
+manual_report() {
+  local s out=""
+  source "${WYN_HOME}/libs/readme.sh"
+  readme_load >/dev/null 2>&1 || [ -n "$README_TEXT" ] || return 0
+  # quoted sentences, minus boilerplate
+  while IFS= read -r s; do
+    s=$(printf '%s' "$s" | sed 's/^[[:space:]]*//')
+    out+="  $s"$'\n'
+    if [ -n "$GROUP_ADD_GROUP" ] && grep -qiw group <<< "$s" && grep -qiwF -- "$GROUP_ADD_GROUP" <<< "$s"; then
+      out+="    --> $(group_action)"$'\n'
+    else
+      out+="    --> No auto-resolvable action found"$'\n'
+    fi
+  done < <(printf '%s\n' "$README_TEXT" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/\([.!?]\) /\1\n/g' \
+    | grep -E '"[^"]+"|“[^”]+”' | grep -viE 'cyberpatriot|forensics question|hacking tools|["“]sudo["”] command' || true)
+  [ -z "$out" ] || printf '[Possible manuality]\n%s' "$out"
 }
 
 mode=""
@@ -161,3 +182,4 @@ done
 [ -n "$mode" ] || die "missing mode (quick|slow)"
 
 apply_conf "${CONF_DIR}/menial-${mode}.conf"
+[ "$mode" != quick ] || manual_report

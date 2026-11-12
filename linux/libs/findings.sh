@@ -8,34 +8,13 @@ source "${WYN_HOME}/libs/risk.sh"
 finding() { printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4"; }
 
 whitelisted_path() {
-  local f="$1" p
-  case "$f" in "$WYN_HOME"|"$WYN_HOME"/*|"${WYN_HOME}.zip") return 0 ;; esac
-  for p in "${CLEANUP_WHITELIST[@]:-}"; do
-    [ -n "$p" ] && case "$f" in $p) return 0 ;; esac
-  done
-  return 1
+  case "$1" in "$WYN_HOME"|"$WYN_HOME"/*|"${WYN_HOME}.zip") return 0 ;; esac
+  in_list "$1" "${CLEANUP_WHITELIST[@]}"
 }
 
-suspicious_cmd() {
-  printf '%s' "$1" | grep -qE '/\.|/tmp/|/var/tmp/|/dev/shm|/dev/tcp|(^|[^a-z])nc([^a-z]|$)|ncat|base64|wget[[:space:]]|curl[[:space:]]|python[0-9]*[[:space:]]+-c|perl[[:space:]]+-e|chmod[[:space:]]+[0-7]*777|>[[:space:]]*/dev/null[[:space:]]*2>&1[[:space:]]*&'
-}
+benign_cron() { in_list "${1##*/}" "${CRON_BENIGN[@]}"; }
 
-benign_cron() {
-  local n b
-  n=$(basename "$1")
-  for b in "${CRON_BENIGN[@]:-}"; do
-    [ "$n" = "$b" ] && return 0
-  done
-  return 1
-}
-
-cron_shared_file() {
-  local f="$1" p
-  for p in "${CRON_SHARED_FILES[@]:-}"; do
-    [ -n "$p" ] && case "$f" in $p) return 0 ;; esac
-  done
-  return 1
-}
+cron_shared_file() { in_list "$1" "${CRON_SHARED_FILES[@]}"; }
 
 persistence_file_is_shared() {
   cron_shared_file "$1" && return 0
@@ -106,7 +85,7 @@ scan_software() {
     printf '%s' "$crit" | grep -qiw "$sw" && continue
     readme_authorizes "$sw" && continue
     if command -v "$sw" >/dev/null 2>&1 || pkg_installed "$sw"; then
-      finding software "$sw" "hacking tool installed" purge
+      finding software "$sw" "prohibited software installed" purge
     fi
   done
 }
@@ -115,6 +94,8 @@ scan_network() {
   local proto port addr svc pid path crit allowed rule p action detail
   while IFS='|' read -r proto port addr svc pid path; do
     case "$addr" in 127.*|"[::1]":*|::1:*) continue ;; esac
+    in_list "$port/$proto $svc" "${WHITELISTED_LISTENERS[@]:-}" && continue
+    is_whitelisted_service "$svc" && continue
     allowed=false
     for crit in ${CRITICAL_SERVICES:-}; do
       for rule in $(resolve_service_rules "$crit"); do
@@ -319,11 +300,14 @@ scan_accounts() {
 # preserve file inode
 remove_cron_line() {
   local f="$1" line="$2" tmp
+  [ "${DRY_RUN:-false}" = true ] && { printf 'would remove persistence entry from %s\n' "$f"; return 0; }
   [ -f "$f" ] && [ -w "$f" ] || return 1
+  grep -Fxq -- "$line" "$f" || return 1
   tmp=$(mktemp) || return 1
-  grep -vFx -- "$line" "$f" > "$tmp" 2>/dev/null || true
-  cat "$tmp" > "$f"
+  grep -vFx -- "$line" "$f" > "$tmp" 2>/dev/null || [ "$?" -eq 1 ] || { rm -f "$tmp"; return 1; }
+  if ! cat "$tmp" > "$f"; then rm -f "$tmp"; return 1; fi
   rm -f "$tmp"
+  log_removal persistence-line "$f" "$line"
 }
 
 expand_selection() {

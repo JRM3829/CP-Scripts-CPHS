@@ -30,16 +30,9 @@ usage() {
 }
 
 flag_file() {
-  local f="$1" p
-  for p in "${CLEANUP_WHITELIST[@]:-}"; do
-    [ -n "$p" ] && case "$f" in $p) return 0 ;; esac
-  done
-  FILE_PATHS+=("$f")
+  in_list "$1" "${CLEANUP_WHITELIST[@]}" && return 0
+  FILE_PATHS+=("$1")
   FILE_REASONS+=("$2")
-}
-
-is_suspicious_cmd() {
-  printf '%s' "$1" | grep -qE '/\.|/tmp/|/var/tmp/|/dev/tcp|(^|[^a-z])nc([^a-z]|$)|ncat|base64|wget[[:space:]]|curl[[:space:]]|python[0-9]*[[:space:]]+-c|perl[[:space:]]+-e'
 }
 
 log_file_contents() {
@@ -64,7 +57,7 @@ while [ $# -gt 0 ]; do
     -h|--help) usage ;;
     -r|--remove) DO_REMOVE=true ;;
     -y|--yes) AUTO_YES=true ;;
-    -n|--dry-run) : ;;
+    -n|--dry-run) DRY_RUN=true ;;
     *) die "bad option: $1" ;;
   esac
   shift
@@ -75,7 +68,7 @@ while IFS= read -r f; do
   exe=$(grep -m1 -i '^[[:space:]]*Exec=' "$f" | sed -E 's/^[[:space:]]*Exec=[[:space:]]*//' || true)
   case "$f" in
     /root/.config/autostart/*) flag_file "$f" "root autostart${exe:+: $exe}" ;;
-    *) [ -n "$exe" ] && is_suspicious_cmd "$exe" && flag_file "$f" "suspicious autostart: $exe" ;;
+    *) [ -n "$exe" ] && suspicious_cmd "$exe" && flag_file "$f" "suspicious autostart: $exe" ;;
   esac
 done < <(find /root/.config/autostart /home/*/.config/autostart -maxdepth 1 -name '*.desktop' -type f 2>/dev/null)
 
@@ -84,7 +77,7 @@ while IFS= read -r f; do
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in \#*) continue ;; esac
-    if is_suspicious_cmd "$line"; then
+    if suspicious_cmd "$line"; then
       flag_file "$f" "suspicious cron: $line"
       break
     fi
@@ -157,7 +150,9 @@ if [ "$DO_REMOVE" = true ]; then
       f="${FILE_PATHS[$i]}"
       printf '\n[contents of %s]\n' "$f"
       log_file_contents "$f"
-      if rm -f "$f"; then
+      if [ "$DRY_RUN" = true ]; then
+        printf 'would remove %s\n' "$f"
+      elif remove_file "$f"; then
         printf 'removed %s\n' "$f"
       else
         warn "rm failed: $f"
@@ -177,7 +172,14 @@ if [ "$DO_REMOVE" = true ]; then
         [ -n "${killed[$gp]:-}" ] && continue
         killed[$gp]=1
         is_self_or_ancestor "$gp" && continue
-        kill "$gp" 2>/dev/null && printf 'killed %s\n' "$gp" || warn "kill failed: $gp"
+        if [ "$DRY_RUN" = true ]; then
+          printf 'would kill %s\n' "$gp"
+        elif kill "$gp" 2>/dev/null; then
+          log_removal process "$gp"
+          printf 'killed %s\n' "$gp"
+        else
+          warn "kill failed: $gp"
+        fi
       done
     done
   else

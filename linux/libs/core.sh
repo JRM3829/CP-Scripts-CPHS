@@ -5,6 +5,38 @@ export DRY_RUN="${DRY_RUN:-false}"
 warn() { printf '%s\n' "$1" >&2; }
 die() { warn "$1"; exit 1; }
 
+# .txt removals log their contents (forensics answers often live in them)
+log_removal() {
+  local kind="$1" target="$2" details="${3:-}" ts dir
+  [ "${DRY_RUN:-false}" = true ] && return 0
+  mkdir -p "${WYN_HOME}/logs" || return 0
+  ts=$(date '+%Y-%m-%dT%H:%M:%S%z')
+  {
+    if [ "$kind" = file ]; then
+      printf '[%s] file removed: %s\n' "$ts" "$target"
+      if [[ "$target" == *.txt ]]; then
+        dir="${target%/*}"; [ "$dir" != "$target" ] || dir=.
+        printf 'Directory: %s\nContents:\n%s\n\n' "${dir:-/}" "$details"
+      fi
+    else
+      printf '[%s] %s removed: %s%s\n' "$ts" "$kind" "$target" "${details:+ ($details)}"
+    fi
+  } >> "${WYN_HOME}/logs/removed.log" || warn "could not append to removed.log"
+}
+
+remove_file() {
+  local path="$1" contents=""
+  [ "${DRY_RUN:-false}" = true ] && { printf 'would remove %s\n' "$path"; return 0; }
+  [ -e "$path" ] || [ -L "$path" ] || return 1
+  if [[ "$path" == *.txt ]]; then contents=$(cat -- "$path") || return 1; fi
+  rm -f -- "$path" || return 1
+  log_removal file "$path" "$contents"
+}
+
+suspicious_cmd() {
+  printf '%s' "$1" | grep -qE '/\.|/tmp/|/var/tmp/|/dev/shm|/dev/tcp|(^|[^a-z])nc([^a-z]|$)|ncat|base64|wget[[:space:]]|curl[[:space:]]|python[0-9]*[[:space:]]+-c|perl[[:space:]]+-e|chmod[[:space:]]+[0-7]*777|>[[:space:]]*/dev/null[[:space:]]*2>&1[[:space:]]*&'
+}
+
 confirm() {
   local d="${2:-y}" a
   case "$d" in n|N|no) printf '%s [y/N] ' "$1" ;; *) printf '%s [Y/n] ' "$1" ;; esac
@@ -23,17 +55,20 @@ in_list() {
   return 1
 }
 
-# include disguised home accounts
 interactive_accounts() {
-  local uid_min=1000 uid_max=60000
+  local uid_min=1000 uid_max=60000 excluded="${ACCOUNT_WHITELIST[*]:-}"
   if [ -r /etc/login.defs ]; then
     uid_min=$(awk '$1 == "UID_MIN" {print $2; exit}' /etc/login.defs); uid_min=${uid_min:-1000}
     uid_max=$(awk '$1 == "UID_MAX" {print $2; exit}' /etc/login.defs); uid_max=${uid_max:-60000}
   fi
-  awk -F: '
-    ($3 == 0 && $1 != "root") ||
+  awk -F: -v excluded="$excluded" '
+    BEGIN {
+      count = split(excluded, names, /[[:space:]]+/)
+      for (i = 1; i <= count; i++) skip[names[i]] = 1
+    }
+    !skip[$1] && (($3 == 0 && $1 != "root") ||
     ($1 != "nobody" && (($3 >= min && $3 <= max) ||
-      $6 ~ "^/home/")) {
+      $6 ~ "^/home/"))) {
       print $1
     }
   ' min="$uid_min" max="$uid_max" "${1:-/etc/passwd}"
@@ -66,13 +101,18 @@ pkg_install() {
 
 pkg_remove() {
   local p="$1"
+  [ "${DRY_RUN:-false}" = true ] && { printf 'would remove package %s (+ autoremove)\n' "$p"; return 0; }
+  local rc=1
   if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive apt-get purge -y "$p" >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y "$p" >/dev/null 2>&1 && rc=0
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove --purge -y >/dev/null 2>&1 || true
   elif command -v dnf >/dev/null 2>&1; then
-    dnf remove -y "$p" >/dev/null 2>&1 || true
+    dnf remove -y "$p" >/dev/null 2>&1 && rc=0
   elif command -v yum >/dev/null 2>&1; then
-    yum remove -y "$p" >/dev/null 2>&1 || true
+    yum remove -y "$p" >/dev/null 2>&1 && rc=0
   fi
+  [ "$rc" = 0 ] && log_removal package "$p"
+  return "$rc"
 }
 
 pkg_owner() {
@@ -115,7 +155,7 @@ resolve_target() {
   esac
 }
 
-require_tool() { command -v "$1" >/dev/null 2>&1 || return 1; }
+require_tool() { command -v "$1" >/dev/null 2>&1; }
 
 validate_pid() { [ "$1" -eq "$1" ] 2>/dev/null || die "bad pid $1"; [ -d "/proc/$1" ] || die "pid $1 dead"; }
 

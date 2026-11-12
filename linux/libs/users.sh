@@ -29,22 +29,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ -n "$URL_ARG" ]; then
-  page=$(fetch_page "$URL_ARG")
-else
-  readme_path=$(find_readme) || die "CyberPatriot README not found (pass --url <URL or path>)"
-  case "$readme_path" in
-    *.desktop|*.Desktop|*.DESKTOP) url=$(extract_url "$readme_path") ;;
-    *) url="$readme_path" ;;
-  esac
-  [ -n "$url" ] || die "no link in $readme_path (pass --url <URL or path>)"
-  page=$(fetch_page "$url")
+if [ -z "$URL_ARG" ]; then
+  URL_ARG=$(readme_url) || die "CyberPatriot README not found (pass --url <URL or path>)"
+  [ -n "$URL_ARG" ] || die "no link in README launcher (pass --url <URL or path>)"
 fi
+page=$(fetch_page "$URL_ARG")
 [ -n "$page" ] || die "failed to fetch authorized-users list"
 
-text=$(to_text "$page")
-parse_auth_list "$text"
-# group tasks optional
+parse_auth_list "$(to_text "$page")"
 parse_group_membership "$page" || true
 
 [ "$AUTH_LIST_VALID" = true ] \
@@ -129,11 +121,9 @@ echo "  critical services: ${CRITICAL_SERVICES//$'\n'/ }"
 if [ ${#GM_ADD_MEMBERS[@]} -gt 0 ]; then
   echo "  add to group:    ${GM_ADD_MEMBERS[*]} -> $GROUP_ADD_GROUP (create-group=$([ -n "$GM_CREATE_GROUP" ] && echo yes || echo no), create-users=${#GM_CREATE_USERS[@]})"
 fi
-if [ ${#CREATE_ADMIN[@]} -eq 0 ] && [ ${#CREATE_USER[@]} -eq 0 ] && [ ${#GRANT_SUDO[@]} -eq 0 ] \
-   && [ ${#DEMOTE[@]} -eq 0 ] && [ ${#CHANGE_PW[@]} -eq 0 ] && [ ${#UNLOCK[@]} -eq 0 ] \
-   && [ ${#LOCK_ACCT[@]} -eq 0 ] && [ ${#DELETE_ACCT[@]} -eq 0 ] && [ ${#GM_ADD_MEMBERS[@]} -eq 0 ]; then
-  echo "  none - accounts already match"
-fi
+[ $(( ${#CREATE_ADMIN[@]} + ${#CREATE_USER[@]} + ${#GRANT_SUDO[@]} + ${#DEMOTE[@]} + ${#CHANGE_PW[@]}
+  + ${#UNLOCK[@]} + ${#LOCK_ACCT[@]} + ${#DELETE_ACCT[@]} + ${#GM_ADD_MEMBERS[@]} )) -gt 0 ] \
+  || echo "  none - accounts already match"
 
 [ "$DRY_RUN" = true ] && { echo "dry run - no changes"; exit 0; }
 if [ "$AUTO_YES" != true ] && ! confirm "apply these changes?"; then
@@ -141,34 +131,29 @@ if [ "$AUTO_YES" != true ] && ! confirm "apply these changes?"; then
   exit 0
 fi
 
-for u in "${CREATE_ADMIN[@]}"; do
-  if useradd -m -s /bin/bash "$u"; then echo "  created admin: $u"; else warn "  failed create admin: $u"; fi
-done
-for u in "${CREATE_USER[@]}"; do
-  if useradd -m -s /bin/bash "$u"; then echo "  created user: $u"; else warn "  failed create user: $u"; fi
+for u in "${CREATE_ADMIN[@]}" "${CREATE_USER[@]}"; do
+  if useradd -m -s /bin/bash "$u"; then echo "  created: $u"; else warn "  failed create: $u"; fi
 done
 for u in "${GRANT_SUDO[@]}"; do
   if usermod -aG sudo "$u" >/dev/null 2>&1; then echo "  granted sudo: $u"; else warn "  failed sudo: $u"; fi
 done
 for u in "${DEMOTE[@]}"; do
-  if gpasswd -d "$u" sudo >/dev/null 2>&1; then echo "  demoted: $u"; else warn "  failed demote: $u"; fi
+  if gpasswd -d "$u" sudo >/dev/null 2>&1; then log_removal privilege "$u" sudo; echo "  demoted: $u"; else warn "  failed demote: $u"; fi
 done
 if [ ${#CHANGE_PW[@]} -gt 0 ]; then
-  if ! "${WYN_HOME}/libs/pam.sh" check /etc/pam.d/common-password 'password [success=@ default=ignore] pam_unix.so obscure sha512 minlen=10 remember=3'; then
-    "${WYN_HOME}/libs/pam.sh" enforce /etc/pam.d/common-password 'password [success=@ default=ignore] pam_unix.so obscure sha512 minlen=10 remember=3'
-  fi
+  pam_line='password [success=@ default=ignore] pam_unix.so obscure sha512 minlen=10 remember=3'
+  "${WYN_HOME}/libs/pam.sh" check /etc/pam.d/common-password "$pam_line" \
+    || "${WYN_HOME}/libs/pam.sh" enforce /etc/pam.d/common-password "$pam_line"
   for u in "${CHANGE_PW[@]}"; do
-      pw="${TARGET_PASSWORD[$u]}"
-      if printf '%s:%s\n' "$u" "$pw" | chpasswd >/dev/null 2>&1; then
-        passwd -u "$u" >/dev/null 2>&1 || true
-        echo "  changed pw: $u"
-      elif command -v openssl >/dev/null 2>&1; then
-        usermod -p "$(openssl passwd -6 "$pw")" "$u" 2>/dev/null \
-          && { passwd -u "$u" >/dev/null 2>&1 || true; echo "  changed pw (bypass): $u"; } \
-          || warn "  failed pw: $u"
-      else
-        warn "  failed pw: $u"
-      fi
+    pw="${TARGET_PASSWORD[$u]}"
+    # README passwords can fail pwquality; fall back to writing the hash directly
+    if printf '%s:%s\n' "$u" "$pw" | chpasswd >/dev/null 2>&1 \
+      || { command -v openssl >/dev/null 2>&1 && usermod -p "$(openssl passwd -6 "$pw")" "$u" 2>/dev/null; }; then
+      passwd -u "$u" >/dev/null 2>&1 || true
+      echo "  changed pw: $u"
+    else
+      warn "  failed pw: $u"
+    fi
   done
 fi
 for u in "${LOCK_ACCT[@]}"; do
@@ -176,7 +161,7 @@ for u in "${LOCK_ACCT[@]}"; do
 done
 for u in "${DELETE_ACCT[@]}"; do
   [ "$u" = root ] && { warn "  refusing to delete built-in account: root"; continue; }
-  if userdel -rf "$u" >/dev/null 2>&1; then echo "  deleted: $u"; else warn "  failed delete: $u"; fi
+  if userdel -rf "$u" >/dev/null 2>&1; then log_removal account "$u"; echo "  deleted: $u"; else warn "  failed delete: $u"; fi
 done
 
 if [ ${#GM_ADD_MEMBERS[@]} -gt 0 ]; then

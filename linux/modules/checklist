@@ -8,17 +8,20 @@ source "${WYN_HOME}/libs/readme.sh"
 source "${WYN_HOME}/libs/findings.sh"
 
 usage() {
-  printf "Usage: wyn checklist [--select]\n\n"
+  printf "Usage: wyn checklist [--select] [--refresh]\n\n"
   printf "  wyn checklist           show the complete compliance report\n"
   printf "  wyn checklist --select  choose findings to remove\n"
+  printf "  wyn checklist --refresh scan for new findings\n"
   exit 0
 }
 
 SELECT=false
+REFRESH=false
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage ;;
     --select) SELECT=true ;;
+    --refresh) REFRESH=true ;;
     *) die "usage: wyn checklist [--select]" ;;
   esac
   shift
@@ -29,9 +32,36 @@ if ! readme_load 2>/dev/null; then
   ADMINS=""; USERS=""; PROTECTED_USER=""; CRITICAL_SERVICES=""
 fi
 
+cache_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/wyn"
+cache_file="${cache_dir}/checklist.tsv"
+mkdir -p "$cache_dir"
+declare -a SCAN_ROWS=()
+if [ "$REFRESH" = true ] || [ ! -f "$cache_file" ]; then
+  mapfile -t SCAN_ROWS < <(scan_all)
+else
+  declare -A KNOWN=()
+  while IFS='|' read -r c t d a; do
+    [ -n "$c" ] && KNOWN["${c}|${t}|${a}"]=1
+  done < "$cache_file"
+  declare -A SCANNED=()
+  for c in "${!KNOWN[@]}"; do
+    cat="${c%%|*}"
+    [ -n "${SCANNED[$cat]:-}" ] && continue
+    SCANNED[$cat]=1
+    while IFS='|' read -r found target detail action; do
+      [ -n "$found" ] && [ -n "${KNOWN[${found}|${target}|${action}]:-}" ] && SCAN_ROWS+=("${found}|${target}|${detail}|${action}")
+    done < <(scan_all "$cat")
+  done
+fi
+
+tmp_cache=$(mktemp "${cache_file}.XXXXXX")
+printf '%s\n' "${SCAN_ROWS[@]}" > "$tmp_cache"
+mv "$tmp_cache" "$cache_file"
+
 declare -a CAT=() TGT=() DET=() ACT=()
 declare -A SEEN=()
-while IFS='|' read -r c t d a; do
+for row in "${SCAN_ROWS[@]}"; do
+  IFS='|' read -r c t d a <<< "$row"
   [ -n "$c" ] || continue
   key="${c}|${t}|${a}"
   if [ -n "${SEEN[$key]:-}" ]; then
@@ -41,7 +71,7 @@ while IFS='|' read -r c t d a; do
   fi
   SEEN[$key]=${#CAT[@]}
   CAT+=("$c"); TGT+=("$t"); DET+=("$d"); ACT+=("$a")
-done < <(scan_all)
+done
 
 declare -a NUM_IDX=()
 readonly -a DISPLAY_CATS=(media hidden network outgoing account sudo cron autostart software process payload sshkey)
@@ -126,6 +156,27 @@ print_network() {
   done
 }
 
+print_whitelisted() {
+  local proto port addr svc pid path reason crit rule
+  while IFS='|' read -r proto port addr svc pid path; do
+    reason=""
+    if in_list "$port/$proto $svc" "${WHITELISTED_LISTENERS[@]:-}"; then
+      reason="whitelist: $port/$proto $svc"
+    elif is_whitelisted_service "$svc"; then
+      reason="whitelist: $svc"
+    else
+      for crit in ${CRITICAL_SERVICES:-}; do
+        for rule in $(resolve_service_rules "$crit"); do
+          [ "${rule%/*}" = "$port" ] && [ "${rule#*/}" = "$proto" ] && service_matches "$svc" "$crit" && reason="critical: $crit"
+        done
+      done
+      if [ -z "$reason" ] && readme_authorizes "$svc"; then reason="README-authorized: $svc"; fi
+    fi
+    if [ -n "$reason" ]; then printf '  %-8s %-15s PID %-6s %s\n' "$port/$proto" "$svc" "$pid" "$reason"; fi
+  done < <(list_listeners)
+  return 0
+}
+
 printf '\n-- COMPLIANCE AUDIT REPORT --\n'
 if [ ${#CAT[@]} -eq 0 ]; then
   printf '\nNo findings.\n'
@@ -154,6 +205,11 @@ else
         ;;
     esac
   done
+fi
+
+whitelisted=$(print_whitelisted)
+if [ -n "$whitelisted" ]; then
+  printf '\n[WHITELISTED LISTENING SERVICES]\n%s\n' "$whitelisted"
 fi
 
 printf '\n-- SUMMARY: %d findings, %d selectable; nothing changed --\n' "${#CAT[@]}" "${#NUM_IDX[@]}"
@@ -189,15 +245,15 @@ for i in "${PICKED[@]}"; do
   case "${ACT[$i]}" in
     rm)
       [ -f "$t" ] && printf '  sha256 %s  %s\n' "$(sha256sum "$t" 2>/dev/null | awk '{print $1}')" "$t"
-      rm -f "$t" && echo "  removed $t" || warn "  rm failed: $t" ;;
+      remove_file "$t" && echo "  removed $t" || warn "  rm failed: $t" ;;
     rmline)
       remove_cron_line "$t" "${DET[$i]}" && echo "  cleared entry in $t" || warn "  edit failed: $t" ;;
     purge)
       pkg_remove "$t" && echo "  purged $t" || warn "  purge failed: $t" ;;
     userdel)
-      userdel -rf "$t" >/dev/null 2>&1 && echo "  deleted user $t" || warn "  userdel failed: $t" ;;
+      userdel -rf "$t" >/dev/null 2>&1 && { log_removal account "$t"; echo "  deleted user $t"; } || warn "  userdel failed: $t" ;;
     desudo)
-      gpasswd -d "$t" sudo >/dev/null 2>&1 && echo "  removed sudo from $t" || warn "  desudo failed: $t" ;;
+      gpasswd -d "$t" sudo >/dev/null 2>&1 && { log_removal privilege "$t" sudo; echo "  removed sudo from $t"; } || warn "  desudo failed: $t" ;;
     process)
       "${WYN_HOME}/wyn" processes remove -y "$t" && echo "  stopped process $t" || warn "  process removal failed: $t" ;;
     *) warn "  no action for $t" ;;

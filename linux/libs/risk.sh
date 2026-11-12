@@ -114,26 +114,24 @@ pkg_file_tampered() {
   fi
 }
 
-scan_file_content() {
-  local f="$1" sz re hits
-  [ -f "$f" ] && [ -r "$f" ] || return 1
-  sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
-  [ "$sz" -gt 0 ] && [ "$sz" -le "${MAX_SCAN_BYTES:-20971520}" ] || return 1
+signature_hits() {
+  local re hits
   re=$(IFS='|'; printf '%s' "${MALWARE_CONTENT_SIGNATURES[*]:-}")
   [ -n "$re" ] || return 1
-  hits=$(LC_ALL=C grep -aoEm 20 "$re" "$f" 2>/dev/null | sort -u | head -4 | paste -sd, -)
+  hits=$(LC_ALL=C grep -aoEm 20 "$re" 2>/dev/null | sort -u | head -4 | paste -sd, -)
   [ -n "$hits" ] || return 1
   printf '%s' "$hits"
 }
 
-scan_text_content() {
-  local re hits
-  re=$(IFS='|'; printf '%s' "${MALWARE_CONTENT_SIGNATURES[*]:-}")
-  [ -n "$re" ] || return 1
-  hits=$(LC_ALL=C grep -aoEm 20 "$re" <<< "$1" 2>/dev/null | sort -u | head -4 | paste -sd, -)
-  [ -n "$hits" ] || return 1
-  printf '%s' "$hits"
+scan_file_content() {
+  local f="$1" sz
+  [ -f "$f" ] && [ -r "$f" ] || return 1
+  sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+  [ "$sz" -gt 0 ] && [ "$sz" -le "${MAX_SCAN_BYTES:-20971520}" ] || return 1
+  signature_hits < "$f"
 }
+
+scan_text_content() { signature_hits <<< "$1"; }
 
 persistence_refs() {
   local needle="$1"
@@ -191,8 +189,9 @@ risk_signals() {
   fi
 
   [ -f "$bin" ] || return 0
+  # without a package db, provenance is unknown rather than suspicious
   if ! has_pkg_db; then
-    packaged=true   # unknown provenance isn't suspicious
+    packaged=true
   elif file_is_packaged "$bin"; then
     packaged=true
     pkg_file_tampered "$bin" && echo "80|PKG_TAMPER|$bin"
@@ -222,7 +221,7 @@ risk_signals() {
 
 is_trusted_name() {
   local pname="$1" bin="$2"
-  in_list "$pname" "${WHITELIST[@]:-}" 2>/dev/null || return 1
+  in_list "$pname" "${WHITELIST[@]:-}" || return 1
   [ -f "$bin" ] || return 1
   exe_in_writable_dir "$bin" && return 1
   exe_name_mismatch "$pname" "$bin" && return 1

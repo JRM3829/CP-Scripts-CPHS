@@ -6,7 +6,7 @@ source "${WYN_HOME}/conf/wyn.conf"
 source "${WYN_HOME}/libs/core.sh"
 source "${WYN_HOME}/libs/findings.sh"
 
-usage() { echo "usage: wyn processes {remove <pid|:port>|pack <pid|:port>|scan}" >&2; exit 0; }
+usage() { echo "usage: wyn processes {remove <pid|:port|name>|pack <pid|:port>|scan}" >&2; exit 0; }
 
 [ $# -gt 0 ] || usage
 command="$1"; shift
@@ -15,14 +15,15 @@ case "$command" in
   remove)
     [ $# -gt 0 ] || die "remove needs pid or :port"
     declare -a rargs=()
+    auto_yes=false
     for a in "$@"; do
       case "$a" in
-        -y|--yes) ;;
+        -y|--yes) auto_yes=true ;;
         *) rargs+=("$a") ;;
       esac
     done
     [ ${#rargs[@]} -gt 0 ] || die "remove needs pid or :port"
-    t="${rargs[0]}"; pid="$t"
+    t="${rargs[0]}"; pid="$t"; by_name=false
     case "$t" in
       :*)
         root_pid=$(resolve_target "$t" 2>/dev/null || true)
@@ -32,8 +33,15 @@ case "$command" in
           pid=$(get_pid_from_port "${t#:}")
         fi
         ;;
+      *[!0-9]*)
+        by_name=true
+        pid=$(resolve_target "$t")
+        ;;
     esac
     validate_pid "$pid"
+    if [ "$by_name" = true ] && [ "$DRY_RUN" != true ] && [ "$auto_yes" != true ]; then
+      confirm "remove '$t' (PID $pid), including its service/package when found?" n || { echo "cancelled"; exit 0; }
+    fi
 
     payload=$(get_process_payload "$pid" 2>/dev/null || true)
     refs=""
@@ -54,51 +62,60 @@ case "$command" in
     fi
 
     unit=$(ps_field "$pid" unit)
-    if [ -n "$unit" ] && case "$unit" in *.service) true ;; *) false ;; esac; then
-      if case "$unit" in systemd-*.service|user@*.service|dbus*.service|getty*.service|sddm*.service|gdm*.service|lightdm*.service|ssh.service|sshd.service|cron.service|NetworkManager.service|NetworkManager-*.service|auditd.service|rsyslog.service|docker.service|docker.socket|containerd.service|cups.service|cups-browsed.service|ufw.service|apparmor.service|networking.service|resolvconf.service|polkit.service) true ;; *) false ;; esac; then
-        ignored_unit="$unit"
-      else
+    case "$unit" in
+      systemd-*.service|user@*.service|dbus*.service|getty*.service|sddm*.service|gdm*.service|lightdm*.service|ssh.service|sshd.service|cron.service|NetworkManager.service|NetworkManager-*.service|auditd.service|rsyslog.service|docker.service|containerd.service|cups.service|cups-browsed.service|ufw.service|apparmor.service|networking.service|resolvconf.service|polkit.service)
+        ignored_unit="$unit" ;;
+      *.service)
         up=$(systemctl show -p FragmentPath "$unit" 2>/dev/null | cut -d= -f2)
+        pkg=""
+        [ -n "$up" ] && [ -f "$up" ] && pkg=$(pkg_owner "$up")
         if [ "$DRY_RUN" = true ]; then
           echo "would stop and disable $unit"
-          if [ -n "$up" ] && [ -f "$up" ]; then
-            pkg=$(pkg_owner "$up")
-            [ -n "$pkg" ] && echo "would preserve packaged unit file $up ($pkg)" || echo "would remove unit file $up"
+          if [ -n "$pkg" ]; then
+            echo "would remove package $pkg (owns service unit $up)"
+          elif [ -n "$up" ] && [ -f "$up" ]; then
+            echo "would remove unit file $up"
           fi
         else
+          echo "stopping service $unit"
           systemctl stop "$unit" 2>/dev/null || true
-          systemctl disable "$unit" 2>/dev/null || true
-        fi
-        if [ "$DRY_RUN" != true ] && [ -n "$up" ] && [ -f "$up" ]; then
-          pkg=$(pkg_owner "$up")
+          echo "disabling service $unit"
+          systemctl disable "$unit" 2>/dev/null && log_removal service "$unit" disabled || true
           if [ -n "$pkg" ]; then
-            pkg_remove "$pkg"
-          elif [ -f "$up" ]; then
-            rm -f "$up"
-            systemctl daemon-reload 2>/dev/null || true
+            echo "removing package $pkg (owns service unit $up)"
+            pkg_remove "$pkg" || warn "  purge failed: $pkg"
+          elif [ -n "$up" ] && [ -f "$up" ]; then
+            echo "removing service unit file $up"
+            if remove_file "$up"; then
+              echo "reloading systemd units"
+              systemctl daemon-reload 2>/dev/null || true
+            else
+              warn "rm failed: $up"
+            fi
           fi
         fi
-      fi
-    fi
+        ;;
+    esac
 
     pgid=$(ps_field "$pid" pgid)
     if [ "$DRY_RUN" = true ]; then
       echo "would stop process $pid (group $pgid)"
     else
+      cmd=$(ps -p "$pid" -o args= 2>/dev/null || true)
       # avoid killing system groups
       if [ "$pgid" = 1 ] || [ "$pgid" = 0 ] || [ "$pgid" = "$(pgrep -u root systemd | head -1)" ]; then
         kill -STOP "$pid" 2>/dev/null || true
-        kill -9 "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null && log_removal process "$pid" "$cmd" || true
       else
         kill -STOP "-$pgid" 2>/dev/null || true
-        kill -9 "-$pgid" 2>/dev/null || true
+        kill -9 "-$pgid" 2>/dev/null && log_removal process-group "$pgid" "pid $pid: $cmd" || true
       fi
     fi
 
     if [ "$cleanup_payload" = true ]; then
       if [ "$DRY_RUN" = true ]; then
         echo "would remove payload $payload"
-      elif rm -f -- "$payload"; then
+      elif remove_file "$payload"; then
         echo "Payload removed: $payload"
       else
         warn "rm failed: $payload"
@@ -127,7 +144,7 @@ case "$command" in
             fi
             if [ "$DRY_RUN" = true ]; then
               echo "would remove persistence $ref"
-            elif rm -f -- "$ref"; then
+            elif remove_file "$ref"; then
               echo "Persistence removed: $ref"
             else
               warn "rm failed: $ref"

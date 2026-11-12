@@ -26,6 +26,9 @@ case "$command" in
     ;;
   scan | ports)
     probe=false
+    readme_load 2>/dev/null || true
+    red=""; green=""; reset=""
+    [ -t 1 ] && { red=$'\033[31m'; green=$'\033[32m'; reset=$'\033[0m'; }
     for a in "$@"; do
       case "$a" in
         -b|--banner) probe=true ;;
@@ -37,7 +40,17 @@ case "$command" in
     printf '%-8s %-15s %-8s %s\n' PORT SERVICE PID PATH
     declare -a pr=()
     while IFS='|' read -r proto port addr svc pid path; do
-      printf '%-8s %-15s %-8s %s\n' "$port/$proto" "$svc" "$pid" "$path"
+      critical=false
+      for crit in ${CRITICAL_SERVICES:-}; do
+        for rule in $(resolve_service_rules "$crit"); do
+          [ "${rule%/*}" = "$port" ] && [ "${rule#*/}" = "$proto" ] && service_matches "$svc" "$crit" && critical=true
+        done
+      done
+      if [ "$critical" = true ] || is_whitelisted_service "$svc"; then
+        printf '%s%-8s%s %-15s %-8s %s\n' "$green" "$port/$proto" "$reset" "$svc" "$pid" "$path"
+      else
+        printf '%s%-8s%s %-15s %-8s %s\n' "$red" "$port/$proto" "$reset" "$svc" "$pid" "$path"
+      fi
       if [ "$probe" = true ]; then
         bann=$(grab_service_banner "$port")
         v=$(classify_probe "$(probe_port "$port")")

@@ -48,13 +48,12 @@ find_readme() {
     printf '%s' "$WYN_README"
     return 0
   fi
-  # ignore invocation directory
   for dir in "${dirs[@]}"; do
     [ -d "$dir" ] || continue
     f=$(find -L "$dir" -maxdepth 1 -type f -iname 'readme.desktop' -print -quit 2>/dev/null)
     [ -n "$f" ] && { printf '%s' "$f"; return 0; }
   done
-  # desktop html fallback
+  # no .desktop launcher: accept a saved README page
   for dir in "${dirs[@]}"; do
     [ -d "$dir" ] || continue
     while IFS= read -r f; do
@@ -77,49 +76,46 @@ extract_url() {
   printf '%s' "$u"
 }
 
-fetch_page() {
-  local u="$1" page
-  case "$u" in
-    file://*) cat "${u#file://}" 2>/dev/null || true; return 0 ;;
+readme_url() {
+  local r
+  r=$(find_readme) || return 1
+  case "${r,,}" in
+    *.desktop) extract_url "$r" ;;
+    *) printf '%s' "$r" ;;
   esac
-  [ -f "$u" ] && { cat "$u" 2>/dev/null || true; return 0; }
-  if command -v wget >/dev/null 2>&1; then
-    page=$(wget -qO- "$u" 2>/dev/null || true)
-    [ -n "$page" ] && { printf '%s\n' "$page"; return 0; }
-  fi
-  command -v curl >/dev/null 2>&1 && curl -fsSL "$u" 2>/dev/null || true
+}
+
+fetch_page() {
+  local f="${1#file://}"
+  [ -f "$f" ] && { cat "$f" 2>/dev/null; return 0; }
+  wget -qO- "$1" 2>/dev/null || curl -fsSL "$1" 2>/dev/null || true
+}
+
+strip_html() {
+  sed 's/<br[[:space:]]*\/\?>/\n/Ig; s/<[^>]*>//g; s/&nbsp;/ /g; s/&quot;/"/g; s/&#8220;/"/g; s/&#8221;/"/g; s/&#8216;/'"'"'/g; s/&#8217;/'"'"'/g; s/&amp;/\&/g'
 }
 
 sanitize_html() {
   local page body
-  page=$(sed -n '1,$p')
-  body=$(printf '%s\n' "$page" | sed -n '/<body\b/,/<\/body>/Ip')
-  [ -n "$body" ] || body="$page"
-  printf '%s\n' "$body" \
+  page=$(cat)
+  body=$(sed -n '/<body\b/,/<\/body>/Ip' <<< "$page")
+  printf '%s\n' "${body:-$page}" \
     | sed '/<script\b/,/<\/script>/Id; /<style\b/,/<\/style>/Id' \
-    | sed 's/<br[[:space:]]*\/?>/\n/Ig; s/<[^>]*>//g; s/&quot;/"/g; s/&#8220;/"/g; s/&#8221;/"/g; s/&#8216;/'"'"'/g; s/&#8217;/'"'"'/g; s/&nbsp;/ /g; s/&amp;/\&/g'
+    | strip_html
 }
 
 to_text() {
   local page="$1" block extra
-  block=$(printf '%s\n' "$page" | sed -n '/<[[:space:]]*pre[^>]*>/,/<\/pre>/p')
+  block=$(sed -n '/<[[:space:]]*pre[^>]*>/,/<\/pre>/p' <<< "$page")
   if [ -z "$block" ]; then
     block="$page"
   else
-    extra=$(printf '%s\n' "$page" \
-      | sed 's/<br[[:space:]]*\/?>/\n/Ig' \
-      | sed 's/&nbsp;/ /g' \
-      | sed 's/&quot;/"/g' \
-      | sed 's/<[^>]*>//g' \
+    # critical services can sit outside the <pre> account list
+    extra=$(strip_html <<< "$page" \
       | awk 'tolower($0) ~ /^[[:space:]]*critical services/ {f=1} f && tolower($0) ~ /^[[:space:]]*(authorized administrators|authorized users)/ {f=0} f {print}')
     [ -n "$extra" ] && block="${extra}"$'\n'"${block}"
   fi
-  printf '%s\n' "$block" \
-    | sed 's/<br[[:space:]]*\/?>/\n/Ig' \
-    | sed 's/&nbsp;/ /g' \
-    | sed 's/&quot;/"/g' \
-    | sed 's/&#8220;/"/g; s/&#8221;/"/g; s/&#8216;/'"'"'/g; s/&#8217;/'"'"'/g; s/&amp;/\&/g' \
-    | sed 's/<[^>]*>//g'
+  strip_html <<< "$block"
 }
 
 normalize_service() {
@@ -150,6 +146,24 @@ normalize_service() {
   [ -n "$token" ] && printf '%s\n' "$token"
 }
 
+section_accounts() {
+  awk -v start="^[[:space:]]*$1" -v stop="^[[:space:]]*$2" '
+    tolower($0) ~ start {flag=1; next}
+    tolower($0) ~ stop {flag=0; next}
+    flag && tolower($0) ~ /^[[:space:]]*(critical services|competition|forensics|guidelines|tasks?|notes?)([[:space:]:]|$)/ {flag=0; next}
+    flag {
+      if (!NF) next
+      if (tolower($1) ~ /^password:?$/) next
+      if ($0 ~ /user[[:space:]]+"[^"]+"/) next
+      gsub(/\(you\)/, "", $0)
+      gsub(/^[-*•]+[[:space:]]*/, "", $0)
+      gsub(/[[:space:]]+/, " ", $0)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if (NF == 1 && $0 ~ /^[a-z_][a-z0-9_.-]*[$]?$/ && length($0) <= 32) print $1
+    }
+  '
+}
+
 parse_auth_list() {
   local text="$1"
   AUTH_LIST_VALID=false
@@ -169,37 +183,8 @@ parse_auth_list() {
     }
   ' <<< "$text")
 
-  ADMINS=$(awk '
-    tolower($0) ~ /^[[:space:]]*authorized administrators/ {flag=1; next}
-    tolower($0) ~ /^[[:space:]]*authorized users/ {flag=0; next}
-    flag && tolower($0) ~ /^[[:space:]]*(critical services|competition|forensics|guidelines|tasks?|notes?)([[:space:]:]|$)/ {flag=0; next}
-    flag {
-      if (!NF) next
-      if (tolower($1) ~ /^password:?$/) next
-      if ($0 ~ /user[[:space:]]+"[^"]+"/) next
-      gsub(/\(you\)/, "", $0)
-      gsub(/^[-*•]+[[:space:]]*/, "", $0)
-      gsub(/[[:space:]]+/, " ", $0)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-      if (NF == 1 && $0 ~ /^[a-z_][a-z0-9_.-]*[$]?$/ && length($0) <= 32) print $1
-    }
-  ' <<< "$text")
-
-  USERS=$(awk '
-    tolower($0) ~ /^[[:space:]]*authorized users/ {flag=1; next}
-    tolower($0) ~ /^[[:space:]]*authorized administrators/ {flag=0; next}
-    flag && tolower($0) ~ /^[[:space:]]*(critical services|competition|forensics|guidelines|tasks?|notes?)([[:space:]:]|$)/ {flag=0; next}
-    flag {
-      if (!NF) next
-      if (tolower($1) ~ /^password:?$/) next
-      if ($0 ~ /user[[:space:]]+"[^"]+"/) next
-      gsub(/\(you\)/, "", $0)
-      gsub(/^[-*•]+[[:space:]]*/, "", $0)
-      gsub(/[[:space:]]+/, " ", $0)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
-      if (NF == 1 && $0 ~ /^[a-z_][a-z0-9_.-]*[$]?$/ && length($0) <= 32) print $1
-    }
-  ' <<< "$text")
+  ADMINS=$(section_accounts 'authorized administrators' 'authorized users' <<< "$text")
+  USERS=$(section_accounts 'authorized users' 'authorized administrators' <<< "$text")
 
   CRITICAL_SERVICES=$(awk '
     tolower($0) ~ /^[[:space:]]*critical services/ {
@@ -273,7 +258,8 @@ canonical_service() {
     mysql|mariadb|mysqld|database) echo mysql ;;
     postgres|postgresql) echo postgresql ;;
     samba|smb|smbd|nmbd) echo samba ;;
-    cups|cupsd|ipp) echo cups ;;
+    cups|cupsd|cups-browsed|ipp) echo cups ;;
+    avahi-daemon) echo avahi ;;
     ntp|ntpd|chrony) echo ntp ;;
     dhcp|dhcpd) echo dhcp ;;
     ldap|slapd) echo ldap ;;
@@ -281,6 +267,12 @@ canonical_service() {
     rdp|xrdp) echo rdp ;;
     *) printf '%s\n' "${1,,}" ;;
   esac
+}
+
+is_whitelisted_service() {
+  local svc
+  svc=$(canonical_service "$1")
+  in_list "$1" "${WHITELISTED_SERVICES[@]:-}" || in_list "$svc" "${WHITELISTED_SERVICES[@]:-}"
 }
 
 service_matches() {
@@ -344,16 +336,12 @@ readme_authorizes() {
 }
 
 readme_load() {
-  local r="" page url text
+  local page url text
   PROTECTED_USER=""; ADMINS=""; USERS=""; CRITICAL_SERVICES=""; README_TEXT=""
   AUTH_LIST_VALID=false; CRITICAL_SERVICES_VALID=false
   README_PASSWORD_USERS=(); README_PASSWORD_VALUES=()
   GROUP_ADD_USERS=""; GROUP_ADD_GROUP=""
-  r=$(find_readme) || return 1
-  case "$r" in
-    *.desktop|*.Desktop|*.DESKTOP) url=$(extract_url "$r") ;;
-    *) url="$r" ;;
-  esac
+  url=$(readme_url) || return 1
   [ -n "$url" ] || return 1
   page=$(fetch_page "$url")
   [ -n "$page" ] || return 1

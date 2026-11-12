@@ -35,6 +35,7 @@ ensure_wyn_on_path() {
 
 main() {
   [ $# -gt 0 ] || usage
+  local -a argv=("$@")
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,7 +48,7 @@ main() {
 
   [ $# -gt 0 ] || usage
 
-  [ "$EUID" -eq 0 ] || [ "$DRY_RUN" = true ] || exec sudo "$0" "$@"
+  [ "$EUID" -eq 0 ] || [ "$DRY_RUN" = true ] || exec sudo "$0" "${argv[@]}"
 
   ensure_wyn_on_path
 

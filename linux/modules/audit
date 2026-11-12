@@ -25,13 +25,6 @@ else
   warn "conf/suid-sgid.conf not found - SUID/SGID check skipped"
 fi
 
-cleanup() {
-  local code=$?
-  [ "$code" -ne 0 ] && echo "interrupted or failed (code $code)" >&2
-  exit "$code"
-}
-trap cleanup INT TERM EXIT
-
 print_hits() {
   local title="$1" none="$2" count="$3"; shift 3
   echo "== $title =="
@@ -65,13 +58,9 @@ done
 
 echo "security scanner suite on $(hostname)"
 
-install_pkg chkrootkit || warn "setup failed: chkrootkit"
-install_pkg rkhunter || warn "setup failed: rkhunter"
-install_pkg unhide || warn "setup failed: unhide"
-install_pkg lynis || warn "setup failed: lynis"
-install_pkg aide || warn "setup failed: aide"
-install_pkg auditd || warn "setup failed: auditd"
-install_pkg clamav || warn "setup failed: clamav"
+for pkg in chkrootkit rkhunter unhide lynis aide auditd clamav; do
+  install_pkg "$pkg" || warn "setup failed: $pkg"
+done
 
 if require_tool chkrootkit; then sudo chkrootkit -q || warn "chkrootkit reported issues"; fi
 if require_tool rkhunter; then { sudo rkhunter --check --sk --nocolor 2>/dev/null || true; } | grep -vE "$RKHUNTER_FP_PATTERN" || true; fi
@@ -109,18 +98,14 @@ else
   warn "no KNOWN_GOOD list - SUID/SGID check skipped"
 fi
 
-declare -a wf=()
 mapfile -t wf < <(find / -xdev -type f -perm -0002 2>/dev/null)
 print_hits "World-writable files" "none" "${#wf[@]} found" "${wf[@]}"
-declare -a wd=()
 mapfile -t wd < <(find / -xdev -type d -perm -0002 2>/dev/null)
 print_hits "World-writable dirs" "none" "${#wd[@]} found" "${wd[@]}"
 
-declare -a sui=()
 mapfile -t sui < <(find /usr/bin /usr/sbin -perm -4000 -type f 2>/dev/null | grep -E 'python|perl|lua|php|\bnc\b|ruby|vim|find')
 print_hits "Escalation-prone SUID binaries" "none" "${#sui[@]} with escalation risk" "${sui[@]}"
 
-declare -a hid=()
 mapfile -t hid < <(find /usr/bin /usr/sbin /bin -name '.*' -type f 2>/dev/null)
 print_hits "Hidden binaries in system paths" "none" "${#hid[@]} found" "${hid[@]}"
 

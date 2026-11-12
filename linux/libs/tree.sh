@@ -47,7 +47,8 @@ get_process_argv() {
 payload_result() {
   local interpreter="$1" kind="$2" value="$3" hits=""
   if [ "$kind" = inline ]; then
-    declare -F scan_text_content >/dev/null && hits=$(scan_text_content "$value" 2>/dev/null || true)
+    # risk.sh may not be sourced
+    declare -F scan_text_content >/dev/null && hits=$(scan_text_content "$value" || true)
     value="<inline:${4}:$(printf '%s' "$value" | sha256sum | cut -c1-12)>"
   fi
   printf '%s|%s|%s|%s\n' "$interpreter" "$kind" "$value" "${hits//|//}"
@@ -131,16 +132,6 @@ resolve_interpreted_payload() {
   return 1
 }
 
-# legacy python file lookup
-python_payload_from_args() {
-  local result interpreter kind payload _hits
-  interpreter=$(basename "$1")
-  [[ "$interpreter" =~ ^(python|pypy)([0-9]+(\.[0-9]+)*)?$ ]] || return 1
-  result=$(resolve_interpreted_payload "$@") || return 1
-  IFS='|' read -r _ kind payload _hits <<< "$result"
-  [ "$kind" = file ] && [ -f "$payload" ] && printf '%s' "$payload"
-}
-
 get_process_payload() {
   local pid="$1" exe cwd _ kind payload _hits
   local -a argv=()
@@ -166,92 +157,43 @@ is_self_or_ancestor() {
   done
 }
 
-if ! declare -p PROTECTED_NAMES &>/dev/null; then
-    readonly -a PROTECTED_NAMES=(
-        "systemd" "init" "kthreadd" "systemd-journal" "dbus-daemon" "polkitd"
-        "sddm" "gdm" "lightdm" "xdg-desktop-por" "gnome-shell" "kwin" "kwin_wayland"
-        "bash" "zsh" "sh" "fish" "ash" "dash"
-        "tmux" "screen"
-        "konsole" "alacritty" "gnome-terminal" "kitty" "xfce4-terminal" "wezterm" "xterm"
-        "sudo" "pkexec" "doas"
-    )
-fi
+# group walks stop at these so a target never drags in the session or init
+PROTECTED_NAMES=(
+  systemd init kthreadd systemd-journal dbus-daemon polkitd
+  sddm gdm lightdm xdg-desktop-por gnome-shell kwin kwin_wayland
+  bash zsh sh fish ash dash
+  tmux screen
+  konsole alacritty gnome-terminal kitty xfce4-terminal wezterm xterm
+  sudo pkexec doas
+)
 
-is_protected() {
-  local n="$1" p
-  for p in "${PROTECTED_NAMES[@]}"; do
-    [ "$n" = "$p" ] && return 0
-  done
-  return 1
-}
-
+# prints root first, then the rest of the group
 build_process_group() {
-  local t="$1" max_up=15 max_down=150 current root ppid pname
-  current="$t"; root="$current"; local depth=0
-  while [ "$depth" -lt "$max_up" ]; do
-    ppid=$(ps -o ppid= -p "$current" 2>/dev/null | tr -d ' ' || true)
-    if [ -z "$ppid" ] || [ "$ppid" = "1" ] || [ "$ppid" = "2" ] || [ "$ppid" = "0" ]; then
-      break
-    fi
-    pname=$(get_process_name "$ppid")
-    is_protected "$pname" && break
-    root="$ppid"; current="$ppid"; depth=$((depth + 1))
+  local t="$1" root="$1" ppid depth=0 p child
+  while [ "$depth" -lt 15 ]; do
+    ppid=$(ps_field "$root" ppid)
+    case "$ppid" in ''|0|1|2) break ;; esac
+    in_list "$(get_process_name "$ppid")" "${PROTECTED_NAMES[@]}" && break
+    root="$ppid"; depth=$((depth + 1))
   done
   [ -d "/proc/$t" ] || die "no pid $t"
 
-  local -a all=()
+  local -a all=() stack=("$root")
   declare -A seen=()
-  local child cname p
-  local -a stack=("$root")
-  while [ ${#stack[@]} -gt 0 ]; do
+  while [ ${#stack[@]} -gt 0 ] && [ ${#all[@]} -lt 150 ]; do
     p="${stack[0]}"; stack=("${stack[@]:1}")
-    [ ${#all[@]} -ge "$max_down" ] && break
     [ -n "${seen[$p]:-}" ] && continue
     seen[$p]=1; all+=("$p")
-    for child in $(ps -eo pid,ppid | awk -v x="$p" '$2 == x {print $1}' || true); do
-      cname=$(get_process_name "$child")
-      is_protected "$cname" || stack+=("$child")
+    for child in $(ps -eo pid,ppid | awk -v x="$p" '$2 == x {print $1}'); do
+      in_list "$(get_process_name "$child")" "${PROTECTED_NAMES[@]}" || stack+=("$child")
     done
   done
 
-  local -a f=()
-  for p in "${all[@]}"; do
-    [ "$p" = "1" ] || [ "$p" = "2" ] || [ "$p" = "0" ] && continue
-    pname=$(get_process_name "$p")
-    [ "$pname" = "systemd" ] || [ "$pname" = "init" ] || f+=("$p")
-  done
-
-  local -a u
-  mapfile -t u < <(printf '%s\n' "${f[@]}" | sort -nu)
   printf '%s' "$root"
-  for p in "${u[@]}"; do
-    [ "$p" = "$root" ] || printf ' %s' "$p"
+  for p in $(printf '%s\n' "${all[@]}" | sort -nu); do
+    case "$p" in 0|1|2|"$root") continue ;; esac
+    case "$(get_process_name "$p")" in systemd|init) continue ;; esac
+    printf ' %s' "$p"
   done
   printf '\n'
-}
-
-print_tree() {
-  local t="$1" r="$2"; shift 2
-  declare -A m=()
-  local g rp
-  for g in "$@"; do m[$g]=1; done
-  rp=$(ps -o ppid= -p "$r" 2>/dev/null | tr -d ' ' || true)
-  [ -n "$rp" ] && [ "$rp" != 1 ] && [ "$rp" != 2 ] && rp=""
-
-  walk() {
-    local n="$1" i="$2" name c tag=""
-    name=$(get_process_name "$n")
-    [ "$n" = "$t" ] && tag=" [target]"
-    printf '%s%s (%s)%s\n' "$i" "$name" "$n" "$tag"
-    for c in $(ps -eo pid,ppid | awk -v x="$n" '$2 == x {print $1}' || true); do
-      [ -n "${m[$c]:-}" ] && walk "$c" "$i  "
-    done
-  }
-
-  if [ -n "$rp" ]; then
-    printf '%s (%s) [system process]\n' "$(get_process_name "$rp")" "$rp"
-    walk "$r" "  "
-  else
-    walk "$r" ""
-  fi
 }

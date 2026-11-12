@@ -50,36 +50,20 @@ rule_detail() {
 }
 
 print_risk_overview() {
-  local shell_detected="$1"
+  local shell_detected="$1" pid pname net_info weight flag detail
   shift
-  local group_pids=("$@")
-
   declare -A hits=()
-
-  local pid weight flag detail
-  for pid in "${group_pids[@]}"; do
-    local pname bin
-    pname=$(get_process_name "$pid" 2>/dev/null || echo "unknown")
-    bin=$(get_process_bin "$pid" 2>/dev/null || echo "unknown")
-
-    is_trusted_name "$pname" "$bin" && continue
-
-    local net_info
+  for pid in "$@"; do
+    pname=$(get_process_name "$pid")
+    is_trusted_name "$pname" "$(get_process_bin "$pid")" && continue
     net_info=$(sudo lsof -p "$pid" -i -a -P -n 2>/dev/null || true)
-
     while IFS="|" read -r weight flag detail; do
-      [[ -n "$flag" ]] || continue
-      hits[$flag]="${detail:-$pname}"
+      [[ -n "$flag" ]] && hits[$flag]="${detail:-$pname}"
     done < <(risk_signals "$pid" aggregate "$net_info" 2>/dev/null || true)
   done
 
-  if [[ "$shell_detected" == true ]]; then
-    hits[SHELL_ON_SOCKET]="a listening socket executed our command"
-  fi
-
-  if [[ "${BANNER_RISK_SCORE:-0}" -gt 0 ]]; then
-    hits[BANNER_RISK]="${BANNER_RISK_DETAIL:-suspicious banner}"
-  fi
+  [[ "$shell_detected" == true ]] && hits[SHELL_ON_SOCKET]="a listening socket executed our command"
+  [[ "${BANNER_RISK_SCORE:-0}" -gt 0 ]] && hits[BANNER_RISK]="${BANNER_RISK_DETAIL:-suspicious banner}"
 
   printf "\n[+] RISK OVERVIEW\n\n"
 
@@ -97,45 +81,39 @@ print_risk_overview() {
 }
 
 print_network_activity() {
-  local group_pids=("$@")
+  local found_net=false shell_detected=false pid lsof_out proto state addr port host banner brisk probe_val probe_display
+  declare -A seen_sockets=()
   printf "\n[+] NETWORK OBSERVATIONS\n"
-  
-  local found_net=false
-  local shell_detected=false
 
-  for pid in "${group_pids[@]}"; do
-    local lsof_out
+  for pid in "$@"; do
     lsof_out=$(sudo lsof -p "$pid" -i -a -P -n 2>/dev/null | tail -n +2 || true)
     if [[ -n "$lsof_out" ]]; then
       found_net=true
-      while read -r line; do
-        [[ -z "$line" ]] && continue
-        local proto state addr port banner probe_val probe_display
-        proto=$(echo "$line" | awk '{print $8}')
-        addr=$(echo "$line" | awk '{print $9}')
-        state=$(echo "$line" | awk '{print $10}' | tr -d '()')
-        [[ -z "$state" ]] && state="UNKNOWN"
-        
+      # lsof columns: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME (STATE)
+      while read -r _ _ _ _ _ _ _ proto addr state _; do
+        [[ -n "$proto" ]] || continue
+        state="${state//[()]/}"
+        state="${state:-UNKNOWN}"
+        [[ -n "${seen_sockets[$proto|$addr|$state]:-}" ]] && continue
+        seen_sockets[$proto|$addr|$state]=1
+
         if [[ "$state" == "LISTEN" ]]; then
-          local host brisk
           brisk=""
           port="${addr##*:}"
           host="${addr%:*}"
           host="${host#[}"; host="${host%]}"
           case "$host" in ""|"*"|"0.0.0.0"|"::"|"[::]") host="127.0.0.1" ;; esac
 
-          banner=$(grab_service_banner "$port" "$host" 2>/dev/null || echo "N/A")
-          probe_val=$(classify_probe "$(probe_port "$port" "$host" 2>/dev/null || true)" 2>/dev/null || echo "N/A")
+          banner=$(grab_service_banner "$port" "$host")
+          probe_val=$(classify_probe "$(probe_port "$port" "$host")")
 
           case "$probe_val" in
             REVERSE/BIND*|SHELL\ PROMPT*) shell_detected=true ;;
           esac
 
-          if brisk=$(check_banner_risk "$banner" 2>/dev/null); then
-            if [[ "${brisk%|*}" -gt "${BANNER_RISK_SCORE:-0}" ]]; then
-              BANNER_RISK_SCORE="${brisk%|*}"
-              BANNER_RISK_DETAIL="${brisk#*|} on ${host}:${port}"
-            fi
+          if brisk=$(check_banner_risk "$banner") && [[ "${brisk%|*}" -gt "${BANNER_RISK_SCORE:-0}" ]]; then
+            BANNER_RISK_SCORE="${brisk%|*}"
+            BANNER_RISK_DETAIL="${brisk#*|} on ${host}:${port}"
           fi
 
           case "$probe_val" in
@@ -153,33 +131,27 @@ print_network_activity() {
       done <<< "$lsof_out"
     fi
   done
-  
-  if [[ "$found_net" == false ]]; then
-    printf "    No sockets observed.\n"
-  fi
+
+  [[ "$found_net" == true ]] || printf "    No sockets observed.\n"
 
   SHELL_DETECTED_FLAG="$shell_detected"
 }
 
 print_forensic_details() {
-  local group_pids=("$@")
-
-  for pid in "${group_pids[@]}"; do
-    local start_time cwd cmd bin_path hash owner pkg ppid pname_parent
-    local w_disp x_disp gui_status
-
-    start_time=$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//' || echo "unknown")
-    [[ -n "$start_time" ]] || start_time="unknown"
+  local pid start_time cwd cmd bin_path hash owner pkg ppid pname_parent w_disp x_disp gui_status
+  for pid in "$@"; do
+    start_time=$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//' || true)
+    start_time="${start_time:-unknown}"
     cwd=$(sudo readlink -f "/proc/$pid/cwd" 2>/dev/null || echo "denied")
-    cmd=$(get_process_cmdline "$pid" 2>/dev/null || true)
-    [[ -z "$cmd" ]] && cmd="(kernel thread)"
-    bin_path=$(get_process_bin "$pid" 2>/dev/null || echo "Unknown")
+    cmd=$(get_process_cmdline "$pid" || true)
+    cmd="${cmd:-(kernel thread)}"
+    bin_path=$(get_process_bin "$pid")
 
     hash="N/A"
     owner="unpackaged"
     if [[ -f "$bin_path" ]]; then
-      hash=$(sha256sum "$bin_path" 2>/dev/null | awk '{print $1}' || echo "N/A")
-      pkg=$(pkg_owner "$bin_path" 2>/dev/null || true)
+      hash=$(sha256sum "$bin_path" 2>/dev/null | awk '{print $1}') || hash="N/A"
+      pkg=$(pkg_owner "$bin_path")
       if [[ -n "$pkg" ]]; then
         owner="$pkg"
         pkg_file_tampered "$bin_path" && owner="$pkg (MODIFIED since install)"
@@ -188,15 +160,13 @@ print_forensic_details() {
       owner="binary missing or deleted"
     fi
 
-    ppid=$(ps_field "$pid" ppid 2>/dev/null || echo "unknown")
-    [[ -n "$ppid" ]] || ppid="unknown"
-    pname_parent="unknown"
-    if [[ "$ppid" != "unknown" ]]; then
-      pname_parent=$(get_process_name "$ppid" 2>/dev/null || echo "unknown")
-    fi
+    ppid=$(ps_field "$pid" ppid)
+    ppid="${ppid:-unknown}"
+    pname_parent=unknown
+    [[ "$ppid" == unknown ]] || pname_parent=$(get_process_name "$ppid")
 
-    w_disp=$(get_process_env_var "$pid" "WAYLAND_DISPLAY" 2>/dev/null || true)
-    x_disp=$(get_process_env_var "$pid" "DISPLAY" 2>/dev/null || true)
+    w_disp=$(get_process_env_var "$pid" WAYLAND_DISPLAY)
+    x_disp=$(get_process_env_var "$pid" DISPLAY)
     if [[ -n "$w_disp" ]]; then
       gui_status="Yes (Wayland ${w_disp})"
     elif [[ -n "$x_disp" ]]; then
@@ -239,32 +209,23 @@ main() {
 
   [[ -z "$target" ]] && reason_usage
 
-  local target_pid
-  target_pid=$(resolve_target "$target")
-
-  if [[ "$env_only" == "true" ]]; then
-    print_env "$target_pid"
-    exit 0
-  fi
-  
+  local target_pid root_pid root_user target_label="$target"
   local -a group_pids=()
+  target_pid=$(resolve_target "$target")
+  [[ "$env_only" == true ]] && { print_env "$target_pid"; exit 0; }
+
   read -ra group_pids <<< "$(build_process_group "$target_pid")"
-  
-  local root_pid="${group_pids[0]}"
-  local root_name root_user target_label="$target"
-  root_name=$(get_process_name "$root_pid" 2>/dev/null || echo "unknown")
-  root_user=$(ps_field "$root_pid" user 2>/dev/null || echo "unknown")
-  [[ -n "$root_user" ]] || root_user="unknown"
+  root_pid="${group_pids[0]}"
+  root_user=$(ps_field "$root_pid" user)
   case "$target" in :*) target_label="127.0.0.1:${target#:}" ;; esac
 
   printf "[+] TARGET: %s\n" "$target_label"
-  printf "    Process: %s (PID %s) | User: %s | Group Size: %d\n" "$root_name" "$root_pid" "$root_user" "${#group_pids[@]}"
-  
+  printf "    Process: %s (PID %s) | User: %s | Group Size: %d\n" "$(get_process_name "$root_pid")" "$root_pid" "${root_user:-unknown}" "${#group_pids[@]}"
+
   SHELL_DETECTED_FLAG=false
   BANNER_RISK_SCORE=0
   BANNER_RISK_DETAIL=""
   print_network_activity "${group_pids[@]}"
-  
   print_risk_overview "$SHELL_DETECTED_FLAG" "${group_pids[@]}"
   print_forensic_details "${group_pids[@]}"
 }
